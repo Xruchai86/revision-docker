@@ -1,0 +1,11 @@
+services:
+  revision:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./test-media:/media/source
+      - ./test-output:/media/output
+      - ./test-config:/config    # Einstellungen (settings.json) - übersteht Neustarts
+    devices:
+      - /dev/dri:/dev/dri   # Intel-iGPU für QSV - weglassen, falls keine vorhanden/gewünscht

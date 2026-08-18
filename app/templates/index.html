@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>ReVision (Docker)</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="mark">▶</div>
+    <h1>ReVision</h1>
+    <span class="sub">Docker / QSV</span>
+  </div>
+</header>
+
+<main>
+  <section class="setup-row">
+    <div class="field">
+      <label>Quellordner (im Container, z.B. /media/source)</label>
+      <input type="text" id="inputFolder" placeholder="/media/source">
+    </div>
+    <div class="field">
+      <label>Zielordner</label>
+      <input type="text" id="outputFolder" value="{{ settings.output_folder }}" placeholder="/media/output">
+    </div>
+    <div class="field" style="flex:0 0 200px">
+      <label>Qualitätsprofil</label>
+      <select id="profileSelect">
+        {% for key, p in profiles.items() %}
+        <option value="{{ key }}" {% if key == settings.quality_profile %}selected{% endif %}>{{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="flex:0 0 150px">
+      <label>Downsize-Schwelle (Mbit/s)</label>
+      <input type="number" id="downsizeThreshold" value="{{ settings.downsize_threshold_mbps }}">
+    </div>
+    <button class="btn-gold" onclick="scan()">Scannen</button>
+  </section>
+
+  <div id="scanStatus" class="status-line"></div>
+
+  <table id="resultsTable" style="display:none">
+    <thead>
+      <tr><th style="width:30px"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
+          <th>Datei</th><th>Empfehlung</th><th>Status</th></tr>
+    </thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+
+  <div class="actions-row" id="actionsRow" style="display:none">
+    <button class="btn-gold" onclick="processSelected()">Ausgewählte verarbeiten</button>
+    <span class="status-line" style="margin-left:12px">Fix und Downsize werden pro Datei automatisch richtig zugeordnet.</span>
+  </div>
+
+  <h2>Warteschlange</h2>
+  <table id="jobsTable">
+    <thead><tr><th>Datei</th><th>Art</th><th>Status</th><th>Log</th></tr></thead>
+    <tbody id="jobsBody"></tbody>
+  </table>
+</main>
+
+<div id="logModal" class="modal" style="display:none">
+  <div class="modal-content">
+    <button class="btn-ghost" style="float:right" onclick="closeLog()">Schließen</button>
+    <pre id="logContent"></pre>
+  </div>
+</div>
+
+<script>
+  window.SAVED_THRESHOLD = {{ settings.downsize_threshold_mbps }};
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

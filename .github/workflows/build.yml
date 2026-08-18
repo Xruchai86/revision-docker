@@ -1,0 +1,30 @@
+name: Docker-Image bauen und veröffentlichen
+
+# Läuft automatisch bei jedem Push auf den main-Branch - kein eigener Rechner
+# mit Docker nötig, GitHub baut das Image in der Cloud.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # erlaubt auch manuelles Starten über den "Actions"-Tab
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      - name: Bei Docker Hub anmelden
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Image bauen und hochladen
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # WICHTIG: "yourdockerhubuser" hier durch den echten Docker-Hub-Namen ersetzen
+          # (siehe README, Teil 2, Schritt 4).
+          tags: yourdockerhubuser/revision-docker:latest
