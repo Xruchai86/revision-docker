@@ -311,6 +311,18 @@ def fix_relabel(src: str, out_path: str, log) -> None:
         _run([MKVMERGE, "-o", out_path, hevc_out, "--no-video", mkv_src], log)
 
 
+def _cleanup(*paths: str) -> None:
+    """Best-effort - loescht Zwischendateien, sobald sie nicht mehr gebraucht
+    werden, statt bis zum Jobende alle gleichzeitig liegen zu lassen. Wichtig
+    besonders wenn TEMP_ROOT im RAM (tmpfs) liegt - senkt den Spitzenbedarf
+    z.B. bei einer 15GB-Rohdatei von ~40-50GB auf ~25-30GB pro Job."""
+    for p in paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") -> None:
     """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per QSV reencodiert werden."""
     profile = QUALITY_PROFILES[profile_key]
@@ -323,6 +335,7 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
 
         rpu_p8 = os.path.join(tmp, "rpu_p8.bin")
         _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu_p8], log)
+        _cleanup(raw_hevc)  # nur fuer die RPU-Extraktion gebraucht, danach ueberfluessig
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
         qsv_args = build_qsv_args(profile, profile["quality_fix"])
@@ -335,6 +348,7 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
 
         injected = os.path.join(tmp, "injected.hevc")
         _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu_p8, "-o", injected], log)
+        _cleanup(new_hevc, rpu_p8)  # beide in injected.hevc "aufgegangen", nicht mehr gebraucht
 
         _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
 
@@ -379,6 +393,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
                   "-f", "hevc", raw_hevc], log)
             rpu = os.path.join(tmp, "rpu.bin")
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
+            _cleanup(raw_hevc)
 
             _run([FFMPEG, "-y", "-i", mkv_src, *QSV_INIT_ARGS, "-map", "0:v:0",
                   "-c:v", "hevc_qsv", *qsv_args,
@@ -386,6 +401,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
 
             injected = os.path.join(tmp, "injected.hevc")
             _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu, "-o", injected], log)
+            _cleanup(new_hevc, rpu)
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.

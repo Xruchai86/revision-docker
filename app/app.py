@@ -68,6 +68,43 @@ def api_settings():
     return jsonify(_settings)
 
 
+MEDIA_ROOT = os.path.normpath(os.environ.get("MEDIA_ROOT", "/media/source"))
+
+
+@app.route("/api/browse")
+def api_browse():
+    """Listet Unterordner innerhalb von MEDIA_ROOT auf - fuer den Ordner-
+    Browser im Frontend. rel_path ist relativ zu MEDIA_ROOT, niemals ein
+    absoluter/externer Pfad - verhindert, dass man aus dem gemounteten
+    Medienordner heraus navigieren kann (Path-Traversal-Schutz)."""
+    rel_path = request.args.get("path", "").strip("/")
+    target = os.path.normpath(os.path.join(MEDIA_ROOT, rel_path))
+
+    # Sicherstellen, dass target wirklich INNERHALB von MEDIA_ROOT liegt - auch
+    # nach normpath (faengt "../../etc" o.ae. ab).
+    if os.path.commonpath([target, MEDIA_ROOT]) != os.path.normpath(MEDIA_ROOT):
+        return jsonify({"error": "Ungültiger Pfad."}), 400
+    if not os.path.isdir(target):
+        return jsonify({"error": "Ordner nicht gefunden."}), 404
+
+    try:
+        entries = sorted(
+            name for name in os.listdir(target)
+            if os.path.isdir(os.path.join(target, name)) and not name.startswith(".")
+        )
+    except PermissionError:
+        return jsonify({"error": "Keine Leserechte für diesen Ordner."}), 403
+
+    clean_rel = os.path.relpath(target, MEDIA_ROOT)
+    clean_rel = "" if clean_rel == "." else clean_rel
+    return jsonify({
+        "root": MEDIA_ROOT,
+        "rel_path": clean_rel,
+        "full_path": target,
+        "folders": entries,
+    })
+
+
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
     data = request.get_json()

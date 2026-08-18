@@ -17,8 +17,11 @@
 <main>
   <section class="setup-row">
     <div class="field">
-      <label>Quellordner (im Container, z.B. /media/source)</label>
-      <input type="text" id="inputFolder" placeholder="/media/source">
+      <label>Quellordner (im Container)</label>
+      <div class="path-picker">
+        <input type="text" id="inputFolder" placeholder="/media/source" readonly>
+        <button class="btn-ghost" onclick="openBrowser()">Durchsuchen…</button>
+      </div>
     </div>
     <div class="field">
       <label>Zielordner</label>
@@ -36,23 +39,10 @@
       <label>Downsize-Schwelle (Mbit/s)</label>
       <input type="number" id="downsizeThreshold" value="{{ settings.downsize_threshold_mbps }}">
     </div>
-    <button class="btn-gold" onclick="scan()">Scannen</button>
+    <button class="btn-gold" onclick="scan()" id="scanBtn" disabled>Scannen</button>
   </section>
 
   <div id="scanStatus" class="status-line"></div>
-
-  <table id="resultsTable" style="display:none">
-    <thead>
-      <tr><th style="width:30px"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
-          <th>Datei</th><th>Empfehlung</th><th>Status</th></tr>
-    </thead>
-    <tbody id="resultsBody"></tbody>
-  </table>
-
-  <div class="actions-row" id="actionsRow" style="display:none">
-    <button class="btn-gold" onclick="processSelected()">Ausgewählte verarbeiten</button>
-    <span class="status-line" style="margin-left:12px">Fix und Downsize werden pro Datei automatisch richtig zugeordnet.</span>
-  </div>
 
   <h2>Warteschlange</h2>
   <table id="jobsTable">
@@ -60,6 +50,40 @@
     <tbody id="jobsBody"></tbody>
   </table>
 </main>
+
+<!-- Ordner-Browser-Popup -->
+<div id="browseModal" class="modal" style="display:none">
+  <div class="modal-content">
+    <h2 style="margin-top:0">Quellordner wählen</h2>
+    <div id="browseBreadcrumb" class="breadcrumb"></div>
+    <div id="browseList" class="browse-list"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeBrowser()">Abbrechen</button>
+      <button class="btn-gold" onclick="chooseCurrentFolder()">Diesen Ordner wählen &amp; scannen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scan-Ergebnisse-Popup -->
+<div id="resultsModal" class="modal" style="display:none">
+  <div class="modal-content modal-wide">
+    <h2 style="margin-top:0">Scan-Ergebnisse</h2>
+    <div class="results-toolbar">
+      <label><input type="checkbox" id="selectAll" onclick="toggleAll(this)"> Alle auswählen</label>
+      <span id="resultsCount" class="status-line"></span>
+    </div>
+    <table id="resultsTable">
+      <thead>
+        <tr><th style="width:30px"></th><th>Datei</th><th>Empfehlung</th></tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeResults()">Abbrechen</button>
+      <button class="btn-gold" onclick="processSelected()">Ausgewählte verarbeiten</button>
+    </div>
+  </div>
+</div>
 
 <div id="logModal" class="modal" style="display:none">
   <div class="modal-content">

@@ -20,7 +20,7 @@ WICHTIG: Für QSV muss die Intel-iGPU per /dev/dri an den Container durchgereich
 
   <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Port für die Weboberfläche" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
 
-  <Config Name="Quellordner" Target="/media/source" Default="/mnt/user/Filme" Mode="rw" Description="Quellordner mit den zu fixenden Dateien (im Container: /media/source)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme</Config>
+  <Config Name="Quellordner (kompletter Medien-Root)" Target="/media/source" Default="/mnt/user/Media" Mode="rw" Description="Kompletten Medien-Ordner einbinden (nicht nur einen einzelnen Unterordner) - innerhalb der App gibt's einen Ordner-Browser zum Navigieren/Auswählen, welcher Unterordner tatsächlich gescannt wird." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Media</Config>
 
   <Config Name="Zielordner" Target="/media/output" Default="/mnt/user/Filme_Fertig" Mode="rw" Description="Zielordner für die gefixten Dateien (im Container: /media/output)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme_Fertig</Config>
 

@@ -1,4 +1,5 @@
 let lastResults = [];
+let browseCurrentPath = "";
 const ACTION_LABELS = {
   dual_layer: "Dual-Layer-Fix (verlustfrei)",
   relabel: "Relabel → 8.1 (verlustfrei)",
@@ -23,10 +24,68 @@ document.addEventListener("DOMContentLoaded", () => {
     saveSettingsField({ downsize_threshold_mbps: parseFloat(e.target.value) || 35.0 }));
 });
 
+// ---------------------------------------------------------------------------
+// Ordner-Browser-Popup - navigiert innerhalb des gemounteten Medien-Roots,
+// keine manuelle Pfadeingabe mehr noetig.
+// ---------------------------------------------------------------------------
+async function openBrowser() {
+  document.getElementById("browseModal").style.display = "flex";
+  await browseTo("");
+}
+
+function closeBrowser() {
+  document.getElementById("browseModal").style.display = "none";
+}
+
+async function browseTo(relPath) {
+  const res = await fetch(`/api/browse?path=${encodeURIComponent(relPath)}`);
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+
+  browseCurrentPath = data.rel_path;
+
+  // Breadcrumb aus dem relativen Pfad aufbauen - jedes Segment einzeln anklickbar.
+  const crumbEl = document.getElementById("browseBreadcrumb");
+  const segments = data.rel_path ? data.rel_path.split("/") : [];
+  let html = `<span class="crumb" onclick="browseTo('')">📁 ${data.root}</span>`;
+  let accPath = "";
+  for (const seg of segments) {
+    accPath = accPath ? `${accPath}/${seg}` : seg;
+    const target = accPath;
+    html += ` / <span class="crumb" onclick="browseTo('${target.replace(/'/g, "\\'")}')">${seg}</span>`;
+  }
+  crumbEl.innerHTML = html;
+
+  const listEl = document.getElementById("browseList");
+  listEl.innerHTML = "";
+  if (data.folders.length === 0) {
+    listEl.innerHTML = `<div class="status-line">Keine Unterordner hier.</div>`;
+  }
+  for (const folder of data.folders) {
+    const div = document.createElement("div");
+    div.className = "browse-item";
+    div.textContent = "📁 " + folder;
+    const childPath = data.rel_path ? `${data.rel_path}/${folder}` : folder;
+    div.onclick = () => browseTo(childPath);
+    listEl.appendChild(div);
+  }
+}
+
+function chooseCurrentFolder() {
+  document.getElementById("inputFolder").value = "/media/source" +
+    (browseCurrentPath ? "/" + browseCurrentPath : "");
+  document.getElementById("scanBtn").disabled = false;
+  closeBrowser();
+  scan();
+}
+
+// ---------------------------------------------------------------------------
+// Scan + Ergebnisse-Popup
+// ---------------------------------------------------------------------------
 async function scan() {
   const folder = document.getElementById("inputFolder").value.trim();
   const statusEl = document.getElementById("scanStatus");
-  if (!folder) { statusEl.textContent = "Bitte zuerst einen Quellordner angeben."; return; }
+  if (!folder) { statusEl.textContent = "Bitte zuerst einen Quellordner wählen."; return; }
 
   // Aktuelle Schwelle vor dem Scan speichern, damit der Server sie fuer die
   // can_downsize-Einordnung verwendet.
@@ -43,6 +102,9 @@ async function scan() {
   lastResults = data.results;
   statusEl.textContent = `${data.results.length} Datei(en) gefunden (Downsize-Schwelle: ${data.downsize_threshold_mbps} Mbit/s).`;
 
+  if (data.results.length === 0) return;
+
+  document.getElementById("resultsCount").textContent = `${data.results.length} Datei(en)`;
   const body = document.getElementById("resultsBody");
   body.innerHTML = "";
   for (const r of data.results) {
@@ -55,12 +117,15 @@ async function scan() {
       <td><input type="checkbox" class="rowcheck" data-path="${r.path}" data-mode="${isFix ? "fix" : "downsize"}"></td>
       <td>${r.filename}<br><span style="color:var(--muted);font-size:11px">${r.container} · ${r.resolution} · ${r.bitrate_mbps} Mbit/s · DV ${r.dv_profile ?? "-"}</span></td>
       <td>${tagHtml}</td>
-      <td class="status-cell status-queued">–</td>
     `;
     body.appendChild(tr);
   }
-  document.getElementById("resultsTable").style.display = data.results.length ? "table" : "none";
-  document.getElementById("actionsRow").style.display = data.results.length ? "block" : "none";
+  document.getElementById("selectAll").checked = false;
+  document.getElementById("resultsModal").style.display = "flex";
+}
+
+function closeResults() {
+  document.getElementById("resultsModal").style.display = "none";
 }
 
 function toggleAll(cb) {
@@ -90,8 +155,12 @@ async function processSelected() {
       body: JSON.stringify({ paths: downsizePaths, output_folder: outputFolder, profile }),
     });
   }
+  closeResults();
 }
 
+// ---------------------------------------------------------------------------
+// Warteschlange
+// ---------------------------------------------------------------------------
 async function pollJobs() {
   const res = await fetch("/api/jobs");
   const data = await res.json();

@@ -22,15 +22,37 @@ Was JETZT funktioniert:
   Downsize-Schwelle landen in `/config/settings.json` und übersteht damit
   Container-Neustarts, solange das `/config`-Volume gemappt ist (siehe
   Unraid-Template/docker-compose.yml).
-- Einfache Weboberfläche: Ordner scannen, Dateien auswählen, verarbeiten
-  (Fix und Downsize werden pro Zeile automatisch richtig zugeordnet),
-  Live-Log pro Job.
+- Einfache Weboberfläche: **Ordner-Browser-Popup** (kompletten Medien-Root
+  einbinden, innerhalb der App navigieren statt Pfade zu tippen), Scan-
+  Ergebnisse in einem eigenen Auswahl-Popup (Fix und Downsize werden pro
+  Zeile automatisch richtig zugeordnet), Live-Log pro Job.
 
 **Noch NICHT portiert** (folgt bei Bedarf in weiteren Schritten):
 - SDR-Optimierung, Upscale, SDR→HDR-Remap
 - MP4-Export, Container-Wahl-Dialog bei DV+Atmos
 - Automatische Nachkompression nach dem Fix
 - VMAF-Qualitätsvergleich
+
+## Ordner-Browser statt Pfade tippen (neu)
+
+Der Quellordner wird jetzt als **kompletter Medien-Root** eingebunden (z.B.
+`/mnt/user/Media`, nicht mehr ein einzelner Serien-Unterordner) - "Durchsuchen…"
+öffnet ein Popup, das innerhalb dieses Roots navigierbar ist (Ordner anklicken
+zum Reinwechseln, Breadcrumb oben zum Zurückspringen). "Diesen Ordner wählen &
+scannen" startet direkt den Scan für den gerade angezeigten Unterordner - kein
+manuelles Pfad-Tippen mehr nötig. Ein neuer `/api/browse`-Endpunkt liefert die
+Unterordner-Liste, mit Pfad-Traversal-Schutz (kann nicht aus dem gemounteten
+Root heraus navigieren, selbst mit `../../`-Tricks in der URL).
+
+Die Scan-Ergebnisse erscheinen jetzt ebenfalls in einem eigenen Popup statt
+fest auf der Hauptseite - Auswahl treffen, "Ausgewählte verarbeiten", Popup
+schließt sich automatisch.
+
+**Kein großes Einstellungen-Fenster** (wie bei der Windows-App) - für den
+aktuellen Funktionsumfang (Qualitätsprofil + Downsize-Schwelle) reichen die
+zwei Regler oben auf der Hauptseite völlig aus. Sobald SDR-Optimierung/Upscale
+dazukommen, macht ein eigener Bereich dafür Sinn - bis dahin bewusst schlank
+gehalten, um nicht unnötig einen Klick zwischen Nutzer und Arbeit zu stellen.
 
 ## Bugfix-Hinweis (Profilerkennung bei bestimmten MP4-Quellen)
 
@@ -129,6 +151,36 @@ GitHub-Weboberfläche im Handy-Browser:
    Hochladen ganzer Ordner als der reine Browser-Weg).
 5. Unten einen Commit-Kommentar eingeben (z.B. "Erste Version"), **"Commit
    changes"**.
+
+## Temp-Ordner im RAM (tmpfs) - optional, deutlich schneller
+
+Statt eines Platten-Pfads kann `/media/temp` auch direkt in den Arbeitsspeicher
+gelegt werden (tmpfs) - spart bei den vielen GB an Zwischendateien pro Job
+komplett das Festplatten-I/O. **Nur sinnvoll, wenn genug freier RAM da ist:**
+
+Peak-Speicherbedarf pro Job wurde optimiert (Zwischendateien werden jetzt so
+früh wie möglich gelöscht statt bis Jobende alle gleichzeitig zu liegen), liegt
+aber bei 4K-Dateien wie GoT trotzdem grob bei **25-30 GB pro laufendem Job**
+(Jobs laufen sequentiell, nie mehrere gleichzeitig - der Bedarf addiert sich
+also nicht). Plane entsprechend Puffer für Unraid selbst und andere Container
+ein, sonst droht ein OOM-Absturz des ganzen Servers, nicht nur des Containers.
+
+**Einrichtung in Unraid** (Container bearbeiten → unten **"Add another Path,
+Port, Variable"** → Typ auf **"Device"** oder direkt über die erweiterten
+Container-Einstellungen die **"Extra Parameters"** nutzen):
+
+```
+--tmpfs /media/temp:size=32g,mode=1777
+```
+
+Das ersetzt die bisherige Path-Zuordnung für `/media/temp` (dann NICHT
+zusätzlich als normaler Path eintragen, nur den tmpfs-Parameter). Größe
+(`size=32g`) an deinen tatsächlich verfügbaren RAM anpassen - lieber knapp
+unter dem, was du sicher übrig hast, als zu knapp kalkuliert.
+
+**Wichtig:** Der Inhalt ist beim Container-Neustart automatisch weg (RAM ist
+per Definition nicht dauerhaft) - für Zwischendateien ist das aber ohnehin
+gewünscht, die sollen nach jedem Job sowieso gelöscht werden.
 
 ## Eigener Temp-Ordner (Fix: "No space left on device")
 
