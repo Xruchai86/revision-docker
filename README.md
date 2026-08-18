@@ -32,7 +32,33 @@ Was JETZT funktioniert:
 - Automatische Nachkompression nach dem Fix
 - VMAF-Qualitätsvergleich
 
-## Teil 1: Vom Handy auf GitHub hochladen
+## Bugfix-Hinweis (Profilerkennung bei bestimmten MP4-Quellen)
+
+Manche mediainfo-Versionen/Quellen (beobachtet bei DVDFab-erzeugten MP4s)
+schreiben die Dolby-Vision-Details NICHT als einen kommagetrennten
+`HDR_Format`-Text (wie bei den meisten MakeMKV-MKVs), sondern in separate
+Felder mit `"<DV-Wert> / <Fallback-Wert>"`-Aufbau (z.B.
+`HDR_Format_Profile: "dvhe.05 / "`). Der Scanner erkannte in diesem Fall gar
+kein Dolby-Vision-Profil und bot fälschlich nur "Downsize" statt eines Fixes
+an. Jetzt werden beide Schreibweisen unterstützt.
+
+**Zusätzlich dabei gefunden, potenziell ernster:** Profile-5-Quellen zeigen
+bei manchen mediainfo-Versionen `"BL+RPU"` im Settings-Feld, obwohl Profile 5
+laut Spezifikation NIE eine echte nutzbare Base-Layer hat. Die Erkennung
+verließ sich zuvor rein auf diesen Compat-String - das hätte eine Profile-5-
+Datei fälschlich als "nur verlustfrei relabeln" statt "muss reencodiert
+werden" eingestuft, mit falschen Farben im Ergebnis. Jetzt entscheidet die
+Profilnummer zuerst (5/9 sind immer Reencode-Fälle), der Compat-String nur
+noch für die Dual-Layer-Erkennung.
+
+**Wichtig, falls du auch die Windows-App (ReVision, WPF) nutzt:** Die dortige
+Erkennung in `MediaScanner.cs` folgt derselben Grundannahme (ein
+kommagetrennter `HDR_Format`-String) und wurde bisher nur an MakeMKV-Rips
+getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
+habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
+erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
+
+
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
 GitHub-Weboberfläche im Handy-Browser:

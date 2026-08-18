@@ -135,7 +135,16 @@ def probe(path: str) -> MediaInfo:
     except (TypeError, ValueError):
         pass
 
+    # WICHTIG: mediainfo legt je nach Version/Quelle die DV-Details entweder ALLES
+    # kommagetrennt in "HDR_Format" (aeltere/andere Schreibweise, z.B. bei manchen
+    # MakeMKV-Rips: "Dolby Vision, Version 1.0, Profile 7.6, dvhe.07.06, BL+EL+RPU, ...")
+    # ODER in SEPARATEN Feldern mit "<DV-Wert> / <Fallback-Wert>"-Aufbau (beobachtet bei
+    # DVDFab-MP4s: HDR_Format="Dolby Vision / SMPTE ST 2086", HDR_Format_Profile=
+    # "dvhe.05 / ", HDR_Format_Settings="BL+RPU / ", HDR_Format_Compatibility=" / HDR10").
+    # Beide Formen werden hier unterstuetzt, statt nur die zuerst getestete anzunehmen.
     hdr_format = video.get("HDR_Format", "") or ""
+    hdr_profile_field = video.get("HDR_Format_Profile", "") or ""
+    hdr_settings_field = video.get("HDR_Format_Settings", "") or ""
     compat_str = video.get("HDR_Format_Compatibility", "") or ""
     is_hdr10 = "HDR10" in hdr_format or "HDR10" in compat_str
     mi.is_hdr10 = is_hdr10
@@ -143,24 +152,45 @@ def probe(path: str) -> MediaInfo:
     dv_profile = None
     compat_id = None
     if "Dolby Vision" in hdr_format:
-        # z.B. "Dolby Vision, Version 1.0, Profile 7.6, dvhe.07.06, BL+EL+RPU, ..."
+        # Form 1: alles kommagetrennt in einem String.
         for part in hdr_format.split(","):
             part = part.strip()
             if part.startswith("Profile "):
                 dv_profile = part.replace("Profile ", "").split(".")[0]
             if part in ("BL+EL+RPU", "BL+RPU", "EL+RPU"):
                 compat_id = part
+
+        # Form 2: separate Felder, "<DV-Wert> / <Fallback-Wert>" - nur den Teil VOR
+        # dem "/" nehmen (das ist der Dolby-Vision-eigene Wert, nicht der Fallback).
+        if dv_profile is None:
+            dv_part = hdr_profile_field.split("/")[0].strip()  # z.B. "dvhe.05"
+            if dv_part.lower().startswith("dvhe."):
+                try:
+                    dv_profile = str(int(dv_part.split(".")[1]))  # "dvhe.05" -> "5"
+                except (IndexError, ValueError):
+                    dv_profile = None
+        if compat_id is None:
+            settings_part = hdr_settings_field.split("/")[0].strip()  # z.B. "BL+RPU"
+            if settings_part in ("BL+EL+RPU", "BL+RPU", "EL+RPU"):
+                compat_id = settings_part
     mi.dv_profile = dv_profile
 
     if dv_profile is not None:
         has_el = compat_id in ("BL+EL+RPU", "EL+RPU")
-        has_bl = compat_id in ("BL+EL+RPU", "BL+RPU")
-        if has_el and has_bl:
-            mi.action = "dual_layer"       # verlustfrei, EL verwerfen
-        elif not has_bl:
-            mi.action = "reencode"          # keine Base-Layer -> muss reencodiert werden
-        elif dv_profile != "8" or not is_hdr10:
-            mi.action = "relabel"           # BL vorhanden, aber nicht als 8.1 markiert
+        # Profile 5/9 haben LAUT DV-SPEZIFIKATION nie eine echte nutzbare Base-Layer,
+        # auch wenn manche mediainfo-Versionen bei ihnen trotzdem "BL+RPU" im Settings-
+        # Feld zeigen (beobachtet, nicht nur angenommen - siehe obiges Beispiel: Profile
+        # 5 mit "HDR_Format_Settings":"BL+RPU / "). Deshalb Profilnummer zuerst pruefen,
+        # nicht blind dem Compat-String vertrauen - sonst wuerde eine Profile-5-Datei
+        # faelschlich nur "relabelt" statt reencodiert, mit falschen Farben im Ergebnis.
+        if has_el:
+            mi.action = "dual_layer"            # verlustfrei, EL verwerfen
+        elif dv_profile in ("5", "9"):
+            mi.action = "reencode"              # nie eine echte Base-Layer, immer reencodieren
+        elif dv_profile == "8" and not is_hdr10:
+            mi.action = "relabel"               # BL vorhanden, aber nicht als 8.1 markiert
+        elif dv_profile != "8":
+            mi.action = "reencode"              # unbekanntes Profil ohne EL - sicherer Standard
 
     return mi
 
