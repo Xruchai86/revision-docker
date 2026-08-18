@@ -24,6 +24,8 @@ WICHTIG: Für QSV muss die Intel-iGPU per /dev/dri an den Container durchgereich
 
   <Config Name="Zielordner" Target="/media/output" Default="/mnt/user/Filme_Fertig" Mode="rw" Description="Zielordner für die gefixten Dateien (im Container: /media/output)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme_Fertig</Config>
 
+  <Config Name="Temp-Ordner" Target="/media/temp" Default="/mnt/user/Convert_Temp" Mode="rw" Description="Zwischendateien (MP4-Remux, RPU-Extraktion, Reencode-Zwischenschritte) - braucht bei 4K-Dateien schnell mehrere zig GB. UNBEDINGT auf einen Pfad mit viel freiem Speicher zeigen lassen (Array, nicht Cache/appdata) - sonst 'No space left on device' mitten im Job." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Convert_Temp</Config>
+
   <Config Name="Einstellungen" Target="/config" Default="/mnt/user/appdata/revision" Mode="rw" Description="Speicherort für Einstellungen (Zielordner/Profil/Downsize-Schwelle) - übersteht Container-Neustarts" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/revision</Config>
 
   <Config Name="Intel GPU (QSV)" Target="/dev/dri" Default="/dev/dri" Mode="" Description="Intel-iGPU für QSV-Reencodes durchreichen - ohne das schlägt jeder Reencode-Fix (Profile 5/9) fehl. Verlustfreie Fixes (Profile 7/4/Relabel) brauchen das nicht." Type="Device" Display="always" Required="true" Mask="false">/dev/dri</Config>

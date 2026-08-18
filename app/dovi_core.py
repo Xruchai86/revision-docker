@@ -28,6 +28,25 @@ MEDIAINFO = shutil.which("mediainfo") or "/usr/bin/mediainfo"
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m2ts"}
 
+# Explizit selbst ausgelesen statt uns blind auf Pythons implizite TMPDIR-
+# Erkennung (tempfile.gettempdir()) zu verlassen - falls die Umgebungsvariable
+# aus irgendeinem Grund nicht durchgereicht wird (Container nicht neu gestartet,
+# Docker-Eigenheit, o.ae.), soll das hier klar sichtbar sein statt still auf
+# das volle System-/tmp zurueckzufallen. Wird bei jedem Scan-Aufruf geloggt
+# (siehe app.py), damit man den tatsaechlich verwendeten Pfad sofort sieht.
+TEMP_ROOT = os.environ.get("TMPDIR") or os.environ.get("TEMP_ROOT") or "/tmp"
+os.makedirs(TEMP_ROOT, exist_ok=True)
+print(f"[ReVision] Zwischendateien-Pfad (TEMP_ROOT): {TEMP_ROOT}", flush=True)
+
+
+def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
+    """Wie tempfile.TemporaryDirectory(), aber mit explizit erzwungenem TEMP_ROOT
+    statt Pythons eigener (evtl. fehlerhafter) TMPDIR-Herleitung zu vertrauen.
+    ignore_cleanup_errors=True: ein Aufräumfehler beim Loeschen (z.B. Rest-
+    Datei-Handle einer abgebrochenen Festplatte-voll-Situation) soll den JOB
+    nicht zum Scheitern bringen, nur die Bereinigung selbst darf leise scheitern."""
+    return tempfile.TemporaryDirectory(prefix=prefix, dir=TEMP_ROOT, ignore_cleanup_errors=True)
+
 
 # ---------------------------------------------------------------------------
 # Qualitätsprofile - dieselben vier wie in ReVision (Ausgewogen/Maximale
@@ -218,7 +237,7 @@ def _to_mkv_if_needed(src: str, tmp_dir: str, log) -> str:
 
 def fix_dual_layer(src: str, out_path: str, log) -> None:
     """Profile 7/4/... - verlustfrei, EL verwerfen. Kein Encoder involviert."""
-    with tempfile.TemporaryDirectory() as tmp:
+    with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(src, tmp, log)
         hevc_out = os.path.join(tmp, "video_p81.hevc")
 
@@ -244,7 +263,7 @@ def fix_dual_layer(src: str, out_path: str, log) -> None:
 def fix_relabel(src: str, out_path: str, log) -> None:
     """Single-Layer MIT Base-Layer, falsch markiert (z.B. 8.2/8.4) - verlustfrei,
     nur RPU-Kennung aendern, kein --discard (keine EL vorhanden)."""
-    with tempfile.TemporaryDirectory() as tmp:
+    with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(src, tmp, log)
         hevc_out = os.path.join(tmp, "video_p81.hevc")
 
@@ -268,7 +287,7 @@ def fix_relabel(src: str, out_path: str, log) -> None:
 def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") -> None:
     """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per QSV reencodiert werden."""
     profile = QUALITY_PROFILES[profile_key]
-    with tempfile.TemporaryDirectory() as tmp:
+    with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(src, tmp, log)
 
         raw_hevc = os.path.join(tmp, "orig.hevc")
@@ -319,7 +338,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
     vorhanden) wird unveraendert durchgereicht (dovi_tool inject-rpu), genau wie
     in Downsizer.cs der Windows-App."""
     profile = QUALITY_PROFILES[profile_key]
-    with tempfile.TemporaryDirectory() as tmp:
+    with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(mi.path, tmp, log)
         qsv_args = build_qsv_args(profile, profile["quality_downsize"])
         new_hevc = os.path.join(tmp, "new_base.hevc")

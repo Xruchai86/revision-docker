@@ -58,7 +58,7 @@ getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
 habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
 erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
 
-
+## Teil 1: Vom Handy auf GitHub hochladen
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
 GitHub-Weboberfläche im Handy-Browser:
@@ -78,6 +78,32 @@ GitHub-Weboberfläche im Handy-Browser:
    Hochladen ganzer Ordner als der reine Browser-Weg).
 5. Unten einen Commit-Kommentar eingeben (z.B. "Erste Version"), **"Commit
    changes"**.
+
+## Eigener Temp-Ordner (Fix: "No space left on device")
+
+Zwischendateien (MP4→MKV-Remux, RPU-Extraktion, Reencode-Zwischenschritte)
+liefen bisher im Container-eigenen `/tmp` - das liegt technisch auf dem
+Cache/appdata-Laufwerk und ist bei 4K-Dateien (mehrere GB pro Zwischenschritt)
+schnell voll. Neue Volume-Zuordnung `/media/temp` (Unraid-Template: "Temp-
+Ordner", Standard `/mnt/user/Convert_Temp` - **auf dem Array**, nicht Cache)
+plus `ENV TMPDIR=/media/temp` im Dockerfile - Python's `tempfile`-Modul liest
+das automatisch, kein Code-Fix nötig, nur die Volume-Zuordnung.
+
+**Sofort-Fix ohne neuen Image-Build**, falls du nicht auf einen neuen
+GitHub-Actions-Lauf warten willst: Container in Unraid bearbeiten → "Add
+another Path, Port, Variable" → einmal Path (`/media/temp` → z.B.
+`/mnt/user/Convert_Temp`) und einmal Variable (`TMPDIR` = `/media/temp`)
+hinzufügen, Apply. Wirkt sofort, auch mit dem alten Image.
+
+**Nachtrag:** Falls die Variable trotz korrektem Eintrag nicht zu greifen
+scheint (im Log weiterhin `/tmp/tmp...` statt `/media/temp/tmp...`) - der
+Code liest `TMPDIR` jetzt **explizit selbst aus** (`TEMP_ROOT` in
+`dovi_core.py`) statt sich rein auf Pythons eigene, implizite Herleitung zu
+verlassen, und zeigt den tatsächlich verwendeten Pfad direkt oben in der
+Weboberfläche an ("Docker / QSV · Temp: ...") - damit lässt sich sofort
+prüfen, ob die Variable überhaupt ankommt, ohne SSH. Zusätzlich bringt ein
+Aufräumfehler beim Löschen (z.B. Restdateien nach einem vorherigen
+"Festplatte voll"-Abbruch) jetzt nicht mehr den ganzen Job zum Scheitern.
 
 ## Teil 2: Docker-Image bauen lassen (GitHub Actions - läuft in der Cloud, nicht auf deinem Handy)
 

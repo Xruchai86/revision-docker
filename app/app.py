@@ -55,7 +55,7 @@ threading.Thread(target=_worker, daemon=True).start()
 
 @app.route("/")
 def index():
-    return render_template("index.html", profiles=core.QUALITY_PROFILES, settings=_settings)
+    return render_template("index.html", profiles=core.QUALITY_PROFILES, settings=_settings, temp_root=core.TEMP_ROOT)
 
 
 @app.route("/api/settings", methods=["GET", "POST"])

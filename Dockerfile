@@ -35,5 +35,14 @@ RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
 COPY app/ .
 
+# Zwischendateien (MP4->MKV-Remux, RPU-Extraktion, Reencode-Zwischenschritte)
+# landen standardmaessig NICHT mehr im Container-eigenen /tmp - das liegt auf
+# dem Cache/appdata-Laufwerk und ist bei 4K-Dateien schnell voll ("No space
+# left on device"). /media/temp ist fuer eine Volume-Zuordnung auf das Array
+# gedacht (siehe unraid-template.xml/docker-compose.yml) - Python's tempfile-
+# Modul liest TMPDIR automatisch, kein Code muss dafuer wissen, wo das liegt.
+ENV TMPDIR=/media/temp
+RUN mkdir -p /media/temp
+
 EXPOSE 8080
 CMD ["python3", "app.py"]

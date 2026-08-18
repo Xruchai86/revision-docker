@@ -6,6 +6,7 @@ services:
     volumes:
       - ./test-media:/media/source
       - ./test-output:/media/output
+      - ./test-temp:/media/temp     # Zwischendateien - braucht viel Platz bei 4K
       - ./test-config:/config    # Einstellungen (settings.json) - übersteht Neustarts
     devices:
       - /dev/dri:/dev/dri   # Intel-iGPU für QSV - weglassen, falls keine vorhanden/gewünscht
