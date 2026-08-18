@@ -15,15 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# dovi_tool - offizielles Release-Binary, fest auf eine geprüfte Version gepinnt
-# (nicht "latest", da dessen URL-Muster den Dateinamen inkl. Versionsnummer braucht -
-# ein "latest" bei sich aenderndem Dateinamen wuerde spaeter einfach 404en). Zum
-# Aktualisieren: neue Version unter https://github.com/quietvoid/dovi_tool/releases
-# nachsehen und hier ersetzen.
-ARG DOVI_TOOL_VERSION=2.3.3
-RUN curl -kL "https://github.com/quietvoid/dovi_tool/releases/download/${DOVI_TOOL_VERSION}/dovi_tool-${DOVI_TOOL_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+# dovi_tool - offizielles Release-Binary, fest auf eine geprüfte Version gepinnt.
+# Version bewusst direkt in der URL (keine ARG-Variable) - robuster, keine Frage
+# von Variablen-Expansion. -f sorgt dafür, dass curl bei einem HTTP-Fehler laut
+# fehlschlägt statt eine Fehlerseite still als "tar.gz" zu speichern. Extraktion
+# OHNE expliziten Mitgliedsnamen - das Release-Archiv enthaelt die Datei als
+# "./dovi_tool" (mit Pfad-Praefix), ein exaktes "dovi_tool" ohne Praefix findet
+# tar darin nicht (getestet, nicht angenommen). Zum Aktualisieren: neue Version
+# unter https://github.com/quietvoid/dovi_tool/releases nachsehen und ersetzen.
+RUN curl -fkL "https://github.com/quietvoid/dovi_tool/releases/download/2.3.3/dovi_tool-2.3.3-x86_64-unknown-linux-musl.tar.gz" \
     -o /tmp/dovi_tool.tar.gz \
-    && tar -xzf /tmp/dovi_tool.tar.gz -C /usr/local/bin dovi_tool \
+    && tar -xzf /tmp/dovi_tool.tar.gz -C /usr/local/bin \
     && rm /tmp/dovi_tool.tar.gz \
     && chmod +x /usr/local/bin/dovi_tool
 
