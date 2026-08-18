@@ -2,14 +2,22 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ffmpeg (Ubuntu 24.04 bringt QSV/VAAPI-Unterstuetzung bereits mit),
-# intel-media-va-driver-non-free (iHD-Treiber fuer Core-Ultra/Xe-Grafik),
+# ffmpeg (Ubuntu 24.04 bringt QSV/VAAPI-Unterstuetzung bereits mit - Build nutzt
+# den modernen oneVPL-Pfad, "--enable-libvpl --disable-libmfx", kein Legacy-MediaSDK),
+# intel-media-va-driver-non-free (iHD-VAAPI-Treiber fuer Core-Ultra/Xe-Grafik),
+# libmfx-gen1.2 (oneVPL-Laufzeit-Backend speziell fuer neuere "Gen"-GPUs wie Meteor
+# Lake/Core Ultra - OHNE dieses Paket findet ffmpeg keine QSV-Session, Fehler
+# "MFX_ERR_NOT_FOUND" - Paketname fuer Ubuntu 24.04/noble via packages.ubuntu.com
+# verifiziert, nicht geraten), libmfx1 + libvpl2 als zugehoerige Laufzeit-Bibliotheken,
 # mkvtoolnix (mkvmerge) und mediainfo fuer die Profilerkennung.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     mkvtoolnix \
     mediainfo \
     intel-media-va-driver-non-free \
+    libmfx1 \
+    libmfx-gen1.2 \
+    libvpl2 \
     vainfo \
     python3 python3-pip \
     curl ca-certificates \

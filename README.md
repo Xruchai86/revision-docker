@@ -58,6 +58,18 @@ getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
 habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
 erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
 
+## Bugfix-Hinweis (QSV-Session schlägt fehl: "MFX_ERR_NOT_FOUND")
+
+Reencode-Fixes scheiterten mit `Error creating a MFX session: -9` /
+`No device available for decoder: device type qsv` - obwohl `/dev/dri`
+korrekt durchgereicht war. Grund: Ubuntu 24.04s ffmpeg nutzt den modernen
+oneVPL-Pfad (`--enable-libvpl --disable-libmfx`, siehe eigene ffmpeg-Log-
+Ausgabe), der eigene, bisher fehlende Laufzeit-Pakete braucht - allen voran
+`libmfx-gen1.2` (das oneVPL-Backend speziell für neuere "Gen"-GPUs wie Meteor
+Lake/Core Ultra), dazu `libmfx1` und `libvpl2`. Alle drei Paketnamen wurden
+direkt gegen die echte Ubuntu-24.04-Paketquelle (nicht nur die Web-Ansicht)
+geprüft, bevor sie ins Dockerfile kamen.
+
 ## Teil 1: Vom Handy auf GitHub hochladen
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
