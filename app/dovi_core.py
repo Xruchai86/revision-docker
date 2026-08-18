@@ -46,6 +46,19 @@ print(f"[ReVision] Zwischendateien-Pfad (TEMP_ROOT): {TEMP_ROOT}", flush=True)
 # (z.B. bei mehreren GPUs im System: renderD129 statt renderD128).
 QSV_DEVICE = os.environ.get("QSV_DEVICE", "/dev/dri/renderD128")
 
+# Zweistufige Geraete-Initialisierung statt der einfachen "-qsv_device"-Kurzform:
+# erst ein VAAPI-Geraet explizit erzeugen, dann das QSV-Geraet DARAUS ableiten
+# ("qsv=hw@va" referenziert den Namen "va" des zuvor erzeugten vaapi-Geraets).
+# Die einfache Kurzform fuehrte bei diesem System zu "Error setting child
+# device handle: -17" - ein in der Community dokumentierter Fehler (u.a.
+# identisches Jellyfin-Issue auf Arch/QSV), dessen dort tatsaechlich
+# funktionierende Loesung genau dieses zweistufige Muster ist, nicht geraten.
+QSV_INIT_ARGS = [
+    "-init_hw_device", f"vaapi=va:{QSV_DEVICE}",
+    "-init_hw_device", "qsv=hw@va",
+    "-filter_hw_device", "hw",
+]
+
 
 def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
     """Wie tempfile.TemporaryDirectory(), aber mit explizit erzwungenem TEMP_ROOT
@@ -227,7 +240,13 @@ def probe(path: str) -> MediaInfo:
 # ---------------------------------------------------------------------------
 def _run(cmd: list[str], log) -> None:
     log(f"$ {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    # errors="replace" statt Standard-UTF-8-strict: manche Quelldateien haben
+    # Metadaten in gemischter/fehlerhafter Kodierung (z.B. Titel mit Latin-1-
+    # Resten) - ein einzelnes ungueltiges Byte im ffmpeg/dovi_tool-Output soll
+    # nicht den ganzen Job mit UnicodeDecodeError abschiessen, nur diese eine
+    # Log-Zeile zeigt dann ein Ersatzzeichen statt des Original-Bytes.
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace")
     for line in proc.stdout:
         log(line.rstrip())
     proc.wait()
@@ -307,7 +326,8 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
         qsv_args = build_qsv_args(profile, profile["quality_fix"])
-        _run([FFMPEG, "-y", "-qsv_device", QSV_DEVICE, "-hwaccel", "qsv", "-i", mkv_src, "-map", "0:v:0",
+        _run([FFMPEG, "-y", *QSV_INIT_ARGS, "-hwaccel", "qsv", "-hwaccel_output_format", "qsv",
+              "-i", mkv_src, "-map", "0:v:0",
               "-c:v", "hevc_qsv", *qsv_args,
               "-pix_fmt", "p010le", "-profile:v", "main10",
               "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
@@ -360,7 +380,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             rpu = os.path.join(tmp, "rpu.bin")
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
 
-            _run([FFMPEG, "-y", "-i", mkv_src, "-qsv_device", QSV_DEVICE, "-map", "0:v:0",
+            _run([FFMPEG, "-y", "-i", mkv_src, *QSV_INIT_ARGS, "-map", "0:v:0",
                   "-c:v", "hevc_qsv", *qsv_args,
                   "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
 
@@ -369,7 +389,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
-            _run([FFMPEG, "-y", "-i", mkv_src, "-qsv_device", QSV_DEVICE, "-map", "0:v:0",
+            _run([FFMPEG, "-y", "-i", mkv_src, *QSV_INIT_ARGS, "-map", "0:v:0",
                   "-c:v", "hevc_qsv", *qsv_args,
                   "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
             _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", mkv_src], log)

@@ -90,6 +90,25 @@ Steht dort statt `renderD128` etwas anderes (z.B. `renderD129`), die
 Umgebungsvariable `QSV_DEVICE` im Unraid-Template auf den passenden Pfad
 setzen.
 
+**Zweiter Nachtrag:** Die einfache `-qsv_device`-Kurzform allein reichte noch
+nicht - VAAPI-Treiber lud danach zwar sauber (`va_openDriver() returns 0`
+erschien jetzt im Log), aber ffmpeg scheiterte trotzdem mit `Error setting
+child device handle: -17`. Exakt derselbe Fehler ist in einem Jellyfin-
+GitHub-Issue dokumentiert (dort ebenfalls auf einem QSV/Arch-Setup) - die dort
+tatsächlich funktionierende Lösung ist eine **zweistufige** Geräte-
+Initialisierung statt der Kurzform: erst ein VAAPI-Gerät explizit erzeugen
+(`-init_hw_device vaapi=va:/dev/dri/renderD128`), dann das QSV-Gerät DARAUS
+ableiten (`-init_hw_device qsv=hw@va -filter_hw_device hw`) - genau dieses
+verifizierte Muster ist jetzt eingebaut, nicht nur die einfache Kurzform.
+Nebeneffekt: das behebt gleichzeitig auch die vorherige "hwaccel_output_format
+deprecated"-Warnung, da jetzt explizit `-hwaccel_output_format qsv` gesetzt
+wird.
+
+Zusätzlich (unabhängiger Bug, im selben Test aufgefallen): ein `UnicodeDecodeError`
+bei manchen Dateien mit ungewöhnlich kodierten Metadaten ließ den kompletten
+Job abstürzen, statt nur die betroffene Log-Zeile zu markieren - jetzt mit
+`errors="replace"` toleriert.
+
 ## Teil 1: Vom Handy auf GitHub hochladen
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
