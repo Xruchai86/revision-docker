@@ -323,8 +323,9 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
         vaapi_args = build_vaapi_args(profile, profile["quality_fix"])
-        _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
-              "-vf", "format=p010,hwupload",
+        _run([FFMPEG, "-y",
+              "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
+              "-i", mkv_src, "-map", "0:v:0",
               "-c:v", "hevc_vaapi", *vaapi_args,
               "-profile:v", "main10",
               "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
@@ -379,8 +380,9 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
             _cleanup(raw_hevc)
 
-            _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
-                  "-vf", "format=p010,hwupload",
+            _run([FFMPEG, "-y",
+                  "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
+                  "-i", mkv_src, "-map", "0:v:0",
                   "-c:v", "hevc_vaapi", *vaapi_args,
                   "-f", "hevc", new_hevc], log)
 
@@ -390,8 +392,9 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
-            _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
-                  "-vf", "format=p010,hwupload",
+            _run([FFMPEG, "-y",
+                  "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
+                  "-i", mkv_src, "-map", "0:v:0",
                   "-c:v", "hevc_vaapi", *vaapi_args,
                   "-f", "hevc", new_hevc], log)
             _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", mkv_src], log)

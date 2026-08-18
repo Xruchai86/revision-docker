@@ -127,6 +127,17 @@ bei manchen Dateien mit ungewöhnlich kodierten Metadaten ließ den kompletten
 Job abstürzen, statt nur die betroffene Log-Zeile zu markieren - jetzt mit
 `errors="replace"` toleriert (weiterhin im Code, unabhängig vom VAAPI-Umstieg).
 
+**Nachtrag (Hardware-Decode ergänzt):** Im Unraid-Dashboard fiel auf, dass die
+CPU trotz aktiver GPU (Video Load im GPU-Panel > 0%) spürbar mitarbeitete
+(z.B. 45% Last). Grund: nur der **Encode** lief auf der GPU, das **Decode**
+der Quelldatei lief per Software auf der CPU, mit anschließendem Hochladen
+der Frames zur GPU (`format=p010,hwupload`-Filter). Jetzt läuft die komplette
+Kette (Decode UND Encode) auf der GPU (`-hwaccel vaapi -hwaccel_device ...
+-hwaccel_output_format vaapi` vor der Eingabedatei, kein Software-Zwischenschritt
+mehr) - Muster direkt aus mehreren übereinstimmenden, unabhängigen Quellen
+verifiziert (u.a. offizielle ffmpeg-VAAPI-Dokumentation), nicht geraten. Sollte
+die CPU-Last spürbar senken und die Geschwindigkeit weiter erhöhen.
+
 ## Teil 1: Vom Handy auf GitHub hochladen
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
