@@ -38,6 +38,14 @@ TEMP_ROOT = os.environ.get("TMPDIR") or os.environ.get("TEMP_ROOT") or "/tmp"
 os.makedirs(TEMP_ROOT, exist_ok=True)
 print(f"[ReVision] Zwischendateien-Pfad (TEMP_ROOT): {TEMP_ROOT}", flush=True)
 
+# Explizit statt ffmpeg's automatischer QSV-Geraeteerkennung zu vertrauen - bei
+# manchen Meteor-Lake/Alder-Lake-Systemen findet die automatische Erkennung trotz
+# funktionierendem VAAPI-Treiber keine Session (dokumentiertes Community-Problem,
+# u.a. Gentoo-Forum-Bericht: explizite Geraeteangabe hat es dort geloest).
+# Ueber Umgebungsvariable QSV_DEVICE anpassbar, falls der Render-Node anders heisst
+# (z.B. bei mehreren GPUs im System: renderD129 statt renderD128).
+QSV_DEVICE = os.environ.get("QSV_DEVICE", "/dev/dri/renderD128")
+
 
 def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
     """Wie tempfile.TemporaryDirectory(), aber mit explizit erzwungenem TEMP_ROOT
@@ -299,7 +307,7 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
         qsv_args = build_qsv_args(profile, profile["quality_fix"])
-        _run([FFMPEG, "-y", "-hwaccel", "qsv", "-i", mkv_src, "-map", "0:v:0",
+        _run([FFMPEG, "-y", "-qsv_device", QSV_DEVICE, "-hwaccel", "qsv", "-i", mkv_src, "-map", "0:v:0",
               "-c:v", "hevc_qsv", *qsv_args,
               "-pix_fmt", "p010le", "-profile:v", "main10",
               "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
@@ -352,7 +360,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             rpu = os.path.join(tmp, "rpu.bin")
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
 
-            _run([FFMPEG, "-y", "-i", mkv_src, "-map", "0:v:0",
+            _run([FFMPEG, "-y", "-i", mkv_src, "-qsv_device", QSV_DEVICE, "-map", "0:v:0",
                   "-c:v", "hevc_qsv", *qsv_args,
                   "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
 
@@ -361,7 +369,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
-            _run([FFMPEG, "-y", "-i", mkv_src, "-map", "0:v:0",
+            _run([FFMPEG, "-y", "-i", mkv_src, "-qsv_device", QSV_DEVICE, "-map", "0:v:0",
                   "-c:v", "hevc_qsv", *qsv_args,
                   "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
             _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", mkv_src], log)

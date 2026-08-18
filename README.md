@@ -70,6 +70,26 @@ Lake/Core Ultra), dazu `libmfx1` und `libvpl2`. Alle drei Paketnamen wurden
 direkt gegen die echte Ubuntu-24.04-Paketquelle (nicht nur die Web-Ansicht)
 geprüft, bevor sie ins Dockerfile kamen.
 
+**Nachtrag:** Selbst mit allen drei Paketen installiert (per `dpkg -l` im
+Container bestätigt) und funktionierendem VAAPI-Treiber (bestätigt per
+`vainfo` - der iHD-Treiber findet die GPU und listet HEVC-Encoding als
+unterstützt) blieb der Fehler bestehen. Ursache: ffmpegs automatische QSV-
+Geräteerkennung funktioniert bei manchen Meteor-Lake/Alder-Lake-Systemen
+trotz allem nicht zuverlässig (dokumentiertes Community-Problem, u.a. im
+Gentoo-Forum). Fix: Gerätepfad jetzt explizit angegeben (`-qsv_device
+/dev/dri/renderD128`) statt der automatischen Erkennung zu vertrauen -
+konfigurierbar über die Umgebungsvariable `QSV_DEVICE`, falls dein System
+einen anderen Render-Node nutzt (mehrere GPUs im System o.ä.). Prüfen, welche
+Render-Nodes existieren:
+
+```bash
+docker exec ReVision ls -la /dev/dri
+```
+
+Steht dort statt `renderD128` etwas anderes (z.B. `renderD129`), die
+Umgebungsvariable `QSV_DEVICE` im Unraid-Template auf den passenden Pfad
+setzen.
+
 ## Teil 1: Vom Handy auf GitHub hochladen
 
 Am einfachsten geht das **ohne Git-Kommandozeile**, direkt über die
