@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>ReVision</Name>
-  <Repository>yourdockerhubuser/revision-docker:latest</Repository>
-  <Registry>https://hub.docker.com/r/yourdockerhubuser/revision-docker</Registry>
+  <Repository>ghcr.io/xruchai86/revision-docker:latest</Repository>
+  <Registry>https://ghcr.io/xruchai86/revision-docker</Registry>
   <Branch>
     <Tag>latest</Tag>
   </Branch>

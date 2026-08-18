@@ -2,10 +2,20 @@ name: Docker-Image bauen und veröffentlichen
 
 # Läuft automatisch bei jedem Push auf den main-Branch - kein eigener Rechner
 # mit Docker nötig, GitHub baut das Image in der Cloud.
+#
+# Nutzt GitHub Container Registry (ghcr.io) statt Docker Hub - braucht dafür
+# NUR den automatisch von GitHub bereitgestellten GITHUB_TOKEN, keine
+# zusätzlichen Secrets/Accounts. Landet unter ghcr.io/<dein-github-name>/<repo-name>.
 on:
   push:
     branches: [main]
   workflow_dispatch:   # erlaubt auch manuelles Starten über den "Actions"-Tab
+
+# Erforderlich, damit der GITHUB_TOKEN auch Pakete (Container-Images) schreiben darf -
+# ohne das schlägt der Push zu ghcr.io mit einem Berechtigungsfehler fehl.
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-and-push:
@@ -14,17 +24,23 @@ jobs:
       - name: Code auschecken
         uses: actions/checkout@v4
 
-      - name: Bei Docker Hub anmelden
+      - name: Bei GitHub Container Registry anmelden
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image-Namen klein schreiben
+        # ghcr.io verlangt komplett kleingeschriebene Image-Namen - GitHub-
+        # Benutzernamen duerfen aber Grossbuchstaben enthalten, deshalb hier
+        # zur Sicherheit umwandeln statt uns auf die Schreibweise zu verlassen.
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Image bauen und hochladen
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          # WICHTIG: "yourdockerhubuser" hier durch den echten Docker-Hub-Namen ersetzen
-          # (siehe README, Teil 2, Schritt 4).
-          tags: yourdockerhubuser/revision-docker:latest
+          tags: ghcr.io/${{ steps.repo.outputs.name }}:latest

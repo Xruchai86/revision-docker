@@ -56,25 +56,25 @@ GitHub-Weboberfläche im Handy-Browser:
 ## Teil 2: Docker-Image bauen lassen (GitHub Actions - läuft in der Cloud, nicht auf deinem Handy)
 
 Damit Unraid das Image beziehen kann, muss es irgendwo als fertiges
-Docker-Image liegen (Docker Hub oder GitHub Container Registry) - nicht nur
-als Quellcode auf GitHub. Der einfachste Weg dafür **ohne eigenen Rechner**:
-GitHub Actions baut es automatisch für dich, jedes Mal wenn du Code hochlädst.
+Docker-Image liegen - nicht nur als Quellcode auf GitHub. Hier: **GitHub
+Container Registry (ghcr.io)** - kein separater Account nötig, läuft direkt
+über dein GitHub-Konto. GitHub Actions baut das Image automatisch, jedes Mal
+wenn du Code hochlädst.
 
-1. Docker-Hub-Konto erstellen (falls noch nicht vorhanden): [hub.docker.com](https://hub.docker.com)
-2. Auf Docker Hub: **Account Settings → Security → New Access Token** erstellen,
-   Token kopieren (nur einmal sichtbar).
-3. Im GitHub-Repo: **Settings → Secrets and variables → Actions → New
-   repository secret**, zweimal anlegen:
-   - `DOCKERHUB_USERNAME` = dein Docker-Hub-Benutzername
-   - `DOCKERHUB_TOKEN` = der eben erstellte Token
-4. Die Datei `.github/workflows/build.yml` (liegt schon in diesem Ordner)
-   sorgt dafür, dass bei jedem Upload automatisch ein neues Image gebaut und
-   zu `dein-docker-hub-name/revision-docker` hochgeladen wird - dafür musst
-   du nur noch in dieser Datei `yourdockerhubuser` durch deinen echten
-   Docker-Hub-Namen ersetzen (direkt im Browser bearbeiten: Datei öffnen,
-   Stift-Symbol oben rechts, ändern, committen).
-5. Nach dem nächsten Commit: im Reiter **"Actions"** des Repos nachsehen, ob
-   der Build grün durchläuft (dauert einige Minuten).
+1. Die Datei `.github/workflows/build.yml` liegt schon in diesem Ordner und
+   ist bereits fertig konfiguriert - **kein Bearbeiten nötig**, sie leitet
+   Repo-Name/Benutzername automatisch von deinem GitHub-Repo ab. Wichtig nur:
+   dein Repo muss **exakt `revision-docker` heißen**, sonst landet das Image
+   unter einem anderen Pfad als im Unraid-Template hinterlegt.
+2. Nach dem Hochladen: im Reiter **"Actions"** des Repos nachsehen, ob der
+   Build grün durchläuft (dauert einige Minuten).
+3. **Wichtigster Schritt, wird leicht übersehen:** GitHub-Pakete sind
+   standardmäßig **privat**, auch wenn das Repo selbst öffentlich ist - Unraid
+   kann ohne Anmeldung dann nicht pullen ("denied", obwohl das Image
+   existiert). Auf GitHub: dein Profil → **Packages** → `revision-docker`
+   anklicken → **Package settings** (Zahnrad, unten auf der Seite) →
+   **Change visibility** → **Public**. Ohne diesen Schritt bleibt der Pull
+   auf Unraid dauerhaft verweigert, unabhängig davon wie oft der Build läuft.
 
 ## Teil 3: Auf Unraid einrichten
 
@@ -95,9 +95,8 @@ lassen) muss vorher fertig sein.
 
 **Oder per GUI:**
 
-1. In `unraid-template.xml` (bzw. direkt im Unraid-Template unten)
-   `yourdockerhubuser/revision-docker:latest` durch dein tatsächliches Image
-   aus Teil 2 ersetzen.
+1. In `unraid-template.xml` steht bereits `ghcr.io/xruchai86/revision-docker:latest` -
+   nur bei abweichendem GitHub-Namen/Repo-Namen anpassen.
 2. Unraid-Weboberfläche → **Docker-Tab → "Add Container"** → unten **"Template
    repositories"** einen Link zu deinem GitHub-Repo eintragen, ODER einfacher:
    **"Add Container"** → oben rechts auf **XML bearbeiten** umschalten → Inhalt
