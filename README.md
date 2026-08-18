@@ -1,20 +1,22 @@
 # ReVision (Docker/Unraid)
 
 Web-Pendant zur Windows-App "ReVision" - Dolby-Vision-Profile nach 8.1 fixen,
-über den Browser statt WPF-Fenster, mit Intel QuickSync (QSV) für Unraid-
-iGPUs wie den Core Ultra 5. Kein NVENC hier - Unraid-Server haben typischerweise
-keine dedizierte NVIDIA-GPU (ließe sich als zweites Backend nachrüsten, falls
-doch eine durchgereicht wird - analog zur Windows-App).
+über den Browser statt WPF-Fenster, mit Intel-VAAPI-Hardware-Beschleunigung
+für Unraid-iGPUs (Core Ultra/Arrow Lake/Xe-Grafik). Kein NVENC hier - Unraid-
+Server haben typischerweise keine dedizierte NVIDIA-GPU (ließe sich als
+zweites Backend nachrüsten, falls doch eine durchgereicht wird - analog zur
+Windows-App).
 
 ## Ehrlich zum aktuellen Funktionsumfang (wichtig, bevor du loslegst)
 
 Was JETZT funktioniert:
 
-- Generischer Profil-Fix (Dual-Layer verlustfrei, Reencode per QSV, Relabel
+- Generischer Profil-Fix (Dual-Layer verlustfrei, Reencode per VAAPI, Relabel
   verlustfrei) - der eigentliche Kern der App.
 - Die vier Qualitätsprofile (Ausgewogen/Maximale Qualität/Kleinere Dateien/
-  Schnell) mit den korrigierten QSV-Flags (`extbrc`/`rdo`/`mbbrc`/
-  `b_strategy`, korrekt an Lookahead gekoppelt).
+  Schnell), Qualität über CQP/`-qp` gesteuert (siehe Encoder-Backend-Abschnitt
+  weiter unten - Umstieg von QSV auf VAAPI, nachdem QSV auf der tatsächlichen
+  Hardware zuverlässig scheiterte).
 - **Downsize** (neu) - für bereits gesunde HDR10/Profile-8-Dateien mit hoher
   Bitrate, inkl. DV-RPU-Erhalt bei Profile-8-Quellen (extrahieren, BL neu
   encodieren, unveränderte RPU wieder injizieren).
@@ -80,56 +82,50 @@ getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
 habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
 erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
 
-## Bugfix-Hinweis (QSV-Session schlägt fehl: "MFX_ERR_NOT_FOUND")
+## Encoder-Backend: VAAPI statt QSV/oneVPL (finale Lösung nach mehreren Fehlschlägen)
 
-Reencode-Fixes scheiterten mit `Error creating a MFX session: -9` /
-`No device available for decoder: device type qsv` - obwohl `/dev/dri`
-korrekt durchgereicht war. Grund: Ubuntu 24.04s ffmpeg nutzt den modernen
-oneVPL-Pfad (`--enable-libvpl --disable-libmfx`, siehe eigene ffmpeg-Log-
-Ausgabe), der eigene, bisher fehlende Laufzeit-Pakete braucht - allen voran
-`libmfx-gen1.2` (das oneVPL-Backend speziell für neuere "Gen"-GPUs wie Meteor
-Lake/Core Ultra), dazu `libmfx1` und `libvpl2`. Alle drei Paketnamen wurden
-direkt gegen die echte Ubuntu-24.04-Paketquelle (nicht nur die Web-Ansicht)
-geprüft, bevor sie ins Dockerfile kamen.
+**Ehrliche Historie, weil sie zeigt, wie wir tatsächlich zur Lösung kamen:**
+Drei aufeinanderfolgende QSV/oneVPL-Fixes (fehlende Laufzeit-Pakete, explizite
+Geräteangabe, zweistufige Geräte-Initialisierung) scheiterten alle am selben
+Fehler (`Error setting child device handle: -17`). Grund am Ende gefunden:
+Die tatsächliche Hardware ist **Arrow Lake-S** (Desktop-Core-Ultra-200S-Serie),
+nicht Meteor Lake wie ursprünglich angenommen - alle bisherigen Fixes bezogen
+sich auf die falsche Chip-Generation. Per `lspci -k` verifiziert (`Intel
+Corporation Arrow Lake-S [Intel Graphics]`).
 
-**Nachtrag:** Selbst mit allen drei Paketen installiert (per `dpkg -l` im
-Container bestätigt) und funktionierendem VAAPI-Treiber (bestätigt per
-`vainfo` - der iHD-Treiber findet die GPU und listet HEVC-Encoding als
-unterstützt) blieb der Fehler bestehen. Ursache: ffmpegs automatische QSV-
-Geräteerkennung funktioniert bei manchen Meteor-Lake/Alder-Lake-Systemen
-trotz allem nicht zuverlässig (dokumentiertes Community-Problem, u.a. im
-Gentoo-Forum). Fix: Gerätepfad jetzt explizit angegeben (`-qsv_device
-/dev/dri/renderD128`) statt der automatischen Erkennung zu vertrauen -
-konfigurierbar über die Umgebungsvariable `QSV_DEVICE`, falls dein System
-einen anderen Render-Node nutzt (mehrere GPUs im System o.ä.). Prüfen, welche
-Render-Nodes existieren:
-
+Ein direkter VAAPI-Testencode (komplett ohne QSV/oneVPL-Beteiligung) lief auf
+genau diesem System sofort fehlerfrei durch:
 ```bash
-docker exec ReVision ls -la /dev/dri
+docker exec ReVision ffmpeg -hide_banner -f lavfi -i color=c=black:s=1280x720:d=1:r=25 \
+  -vaapi_device /dev/dri/renderD128 -vf "format=nv12,hwupload" -c:v hevc_vaapi -f null -
 ```
+Das beweist: GPU und Treiber sind einwandfrei, das Problem saß ausschließlich
+in der oneVPL/QSV-Softwareschicht. Die ganze App läuft deshalb jetzt auf
+**direktem `hevc_vaapi`** statt `hevc_qsv` - ein einfacherer, auf dieser
+Hardware nachweislich funktionierender ffmpeg-Codepfad ohne die fehleranfällige
+oneVPL-Geräte-Verkettung.
 
-Steht dort statt `renderD128` etwas anderes (z.B. `renderD129`), die
-Umgebungsvariable `QSV_DEVICE` im Unraid-Template auf den passenden Pfad
-setzen.
+**Was sich dadurch geändert hat:**
+- CQP-Modus mit `-qp` (0-52, niedriger=besser) statt `-global_quality`/ICQ -
+  Letzteres zeigte in Community-Tests inkonsistente Skalierung je nach
+  Treiber-Version, `-qp` ist direkt aus `ffmpeg -h encoder=hevc_vaapi`
+  eindeutig dokumentiert.
+- Kein direktes Äquivalent zu QSVs `extbrc`/`rdo`/`mbbrc`/`look_ahead` mehr -
+  das waren MediaSDK/oneVPL-spezifische Erweiterungen, VAAPIs Rate-Control ist
+  bewusst einfacher gehalten. Qualität wird jetzt rein über `-qp` gesteuert.
+- Umgebungsvariable heißt jetzt `VAAPI_DEVICE` statt `QSV_DEVICE` (alte
+  Variable wird als Fallback noch gelesen, falls sie irgendwo gesetzt ist).
 
-**Zweiter Nachtrag:** Die einfache `-qsv_device`-Kurzform allein reichte noch
-nicht - VAAPI-Treiber lud danach zwar sauber (`va_openDriver() returns 0`
-erschien jetzt im Log), aber ffmpeg scheiterte trotzdem mit `Error setting
-child device handle: -17`. Exakt derselbe Fehler ist in einem Jellyfin-
-GitHub-Issue dokumentiert (dort ebenfalls auf einem QSV/Arch-Setup) - die dort
-tatsächlich funktionierende Lösung ist eine **zweistufige** Geräte-
-Initialisierung statt der Kurzform: erst ein VAAPI-Gerät explizit erzeugen
-(`-init_hw_device vaapi=va:/dev/dri/renderD128`), dann das QSV-Gerät DARAUS
-ableiten (`-init_hw_device qsv=hw@va -filter_hw_device hw`) - genau dieses
-verifizierte Muster ist jetzt eingebaut, nicht nur die einfache Kurzform.
-Nebeneffekt: das behebt gleichzeitig auch die vorherige "hwaccel_output_format
-deprecated"-Warnung, da jetzt explizit `-hwaccel_output_format qsv` gesetzt
-wird.
+**Falls du selbst auf einem anderen System (z.B. echtem Meteor Lake) bist**
+und dort lieber QSV/oneVPL testen willst: die alte QSV-Logik ist im Git-
+Verlauf nachvollziehbar, aber angesichts der hier gemachten Erfahrung würde
+ich direkt mit dem VAAPI-Testbefehl oben anfangen, bevor Zeit in QSV
+investiert wird.
 
-Zusätzlich (unabhängiger Bug, im selben Test aufgefallen): ein `UnicodeDecodeError`
+**Unabhängiger Bugfix, im selben Test aufgefallen:** ein `UnicodeDecodeError`
 bei manchen Dateien mit ungewöhnlich kodierten Metadaten ließ den kompletten
 Job abstürzen, statt nur die betroffene Log-Zeile zu markieren - jetzt mit
-`errors="replace"` toleriert.
+`errors="replace"` toleriert (weiterhin im Code, unabhängig vom VAAPI-Umstieg).
 
 ## Teil 1: Vom Handy auf GitHub hochladen
 
@@ -203,7 +199,7 @@ scheint (im Log weiterhin `/tmp/tmp...` statt `/media/temp/tmp...`) - der
 Code liest `TMPDIR` jetzt **explizit selbst aus** (`TEMP_ROOT` in
 `dovi_core.py`) statt sich rein auf Pythons eigene, implizite Herleitung zu
 verlassen, und zeigt den tatsächlich verwendeten Pfad direkt oben in der
-Weboberfläche an ("Docker / QSV · Temp: ...") - damit lässt sich sofort
+Weboberfläche an ("Docker / VAAPI · Temp: ...") - damit lässt sich sofort
 prüfen, ob die Variable überhaupt ankommt, ohne SSH. Zusätzlich bringt ein
 Aufräumfehler beim Löschen (z.B. Restdateien nach einem vorherigen
 "Festplatte voll"-Abbruch) jetzt nicht mehr den ganzen Job zum Scheitern.
@@ -258,7 +254,7 @@ lassen) muss vorher fertig sein.
    von `unraid-template.xml` einfügen.
 3. Pfade anpassen: Quell-/Zielordner auf deine tatsächlichen Unraid-Share-Pfade
    (z.B. `/mnt/user/Filme`) zeigen lassen.
-4. **Wichtig für QSV:** Die Zeile mit `/dev/dri` muss stehen bleiben, sonst
+4. **Wichtig für VAAPI:** Die Zeile mit `/dev/dri` muss stehen bleiben, sonst
    schlägt jeder Reencode-Fix (Profile 5/9) fehl - verlustfreie Fixes
    (Profile 7/4/Relabel) brauchen keine GPU und funktionieren auch ohne.
 5. Container starten, `http://<Unraid-IP>:8080` im Browser öffnen.

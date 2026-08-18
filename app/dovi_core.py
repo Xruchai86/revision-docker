@@ -7,10 +7,13 @@ Gleiche Prinzipien wie in der Windows-App (DoviConverter.cs/MediaScanner.cs):
 - Single-Layer MIT Base-Layer, falsch markiert (z.B. 8.2/8.4) -> verlustfrei
   relabeln, nur die RPU-Kennung wird auf 8.1 umgestellt.
 
-Encoder-Backend hier: QSV (hevc_qsv via VAAPI), passend zur Intel-iGPU auf
-Unraid-Boxen (z.B. Core Ultra 5) - kein NVENC, da Unraid-Server typischerweise
-keine dedizierte NVIDIA-GPU haben (waere aber als zweites Backend nachruestbar,
-analog zur Windows-App).
+Encoder-Backend hier: direktes VAAPI (hevc_vaapi), passend zur Intel-iGPU auf
+Unraid-Boxen (z.B. Core Ultra 5/Arrow Lake) - kein NVENC, da Unraid-Server
+typischerweise keine dedizierte NVIDIA-GPU haben (waere aber als zweites
+Backend nachruestbar, analog zur Windows-App). QSV/oneVPL wurde bewusst NICHT
+verwendet - siehe Bugfix-Historie im README, die komplette oneVPL-Geraete-
+Verkettung scheiterte auf getesteter Hardware zuverlaessig, waehrend direktes
+VAAPI sofort funktionierte.
 """
 import json
 import os
@@ -38,26 +41,16 @@ TEMP_ROOT = os.environ.get("TMPDIR") or os.environ.get("TEMP_ROOT") or "/tmp"
 os.makedirs(TEMP_ROOT, exist_ok=True)
 print(f"[ReVision] Zwischendateien-Pfad (TEMP_ROOT): {TEMP_ROOT}", flush=True)
 
-# Explizit statt ffmpeg's automatischer QSV-Geraeteerkennung zu vertrauen - bei
-# manchen Meteor-Lake/Alder-Lake-Systemen findet die automatische Erkennung trotz
-# funktionierendem VAAPI-Treiber keine Session (dokumentiertes Community-Problem,
-# u.a. Gentoo-Forum-Bericht: explizite Geraeteangabe hat es dort geloest).
-# Ueber Umgebungsvariable QSV_DEVICE anpassbar, falls der Render-Node anders heisst
-# (z.B. bei mehreren GPUs im System: renderD129 statt renderD128).
-QSV_DEVICE = os.environ.get("QSV_DEVICE", "/dev/dri/renderD128")
-
-# Zweistufige Geraete-Initialisierung statt der einfachen "-qsv_device"-Kurzform:
-# erst ein VAAPI-Geraet explizit erzeugen, dann das QSV-Geraet DARAUS ableiten
-# ("qsv=hw@va" referenziert den Namen "va" des zuvor erzeugten vaapi-Geraets).
-# Die einfache Kurzform fuehrte bei diesem System zu "Error setting child
-# device handle: -17" - ein in der Community dokumentierter Fehler (u.a.
-# identisches Jellyfin-Issue auf Arch/QSV), dessen dort tatsaechlich
-# funktionierende Loesung genau dieses zweistufige Muster ist, nicht geraten.
-QSV_INIT_ARGS = [
-    "-init_hw_device", f"vaapi=va:{QSV_DEVICE}",
-    "-init_hw_device", "qsv=hw@va",
-    "-filter_hw_device", "hw",
-]
+# Direktes VAAPI statt QSV/oneVPL - siehe Bugfix-Historie im README: die ganze
+# oneVPL-Geraete-Verkettung ("-init_hw_device qsv=hw@va") scheiterte auf diesem
+# System zuverlaessig mit "Error setting child device handle: -17", trotz
+# mehrerer verschiedener, community-dokumentierter Loesungsversuche. Ein
+# direkter VAAPI-Testencode (ohne jede QSV/oneVPL-Beteiligung) lief dagegen auf
+# demselben System sofort fehlerfrei durch - GPU und Treiber sind also in
+# Ordnung, das Problem sass ausschliesslich in der oneVPL-Softwareschicht.
+# Ueber Umgebungsvariable VAAPI_DEVICE anpassbar, falls der Render-Node anders
+# heisst (mehrere GPUs im System o.ae.).
+VAAPI_DEVICE = os.environ.get("VAAPI_DEVICE", os.environ.get("QSV_DEVICE", "/dev/dri/renderD128"))
 
 
 def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
@@ -71,7 +64,7 @@ def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
 
 # ---------------------------------------------------------------------------
 # Qualitätsprofile - dieselben vier wie in ReVision (Ausgewogen/Maximale
-# Qualität/Kleinere Dateien/Schnell), mit den QSV-Werten aus der Windows-App
+# Qualität/Kleinere Dateien/Schnell), mit den frueheren QSV-Werten (jetzt fuer VAAPI weiterverwendet)
 # uebernommen (inkl. der nachtraeglich ergaenzten extbrc/rdo/mbbrc/b_strategy-
 # Kopplung an Lookahead).
 # ---------------------------------------------------------------------------
@@ -99,28 +92,19 @@ QUALITY_PROFILES = {
 }
 
 
-def build_qsv_args(profile: dict, quality: int) -> list[str]:
-    """Baut die hevc_qsv-Argumentliste - identische Logik/Begruendung wie
-    QsvOptions.cs in der Windows-App: extbrc/rdo/mbbrc/b_strategy nur bei
-    aktivem Lookahead, weil die Lookahead-Tiefe laut ffmpeg-Doku ohne extbrc
-    gar nicht erst wirkt."""
-    args = [
-        "-preset", profile["preset"],
-        "-global_quality", str(quality),
+def build_vaapi_args(profile: dict, qp: int) -> list[str]:
+    """Baut die hevc_vaapi-Argumentliste. CQP-Modus mit -qp (0-52, niedriger=
+    besser) statt -global_quality/ICQ - letzteres zeigte in mehreren Community-
+    Tests inkonsistente Skalierung je nach Treiber-Version, waehrend -qp direkt
+    aus 'ffmpeg -h encoder=hevc_vaapi' mit klarer, eindeutiger Bedeutung
+    dokumentiert ist. Kein Aequivalent zu QSVs extbrc/rdo/mbbrc/look_ahead -
+    das waren MediaSDK/oneVPL-spezifische Erweiterungen, VAAPIs Rate-Control
+    ist bewusst einfacher gehalten."""
+    return [
+        "-rc_mode", "CQP",
+        "-qp", str(qp),
         "-bf", str(profile["bframes"]),
-        "-adaptive_i", "1",
-        "-adaptive_b", "1",
-        "-look_ahead", "1" if profile["lookahead"] else "0",
     ]
-    if profile["lookahead"]:
-        args += [
-            "-extbrc", "1",
-            "-rdo", "1",
-            "-mbbrc", "1",
-            "-b_strategy", "1",
-            "-look_ahead_depth", str(profile["lookahead_depth"]),
-        ]
-    return args
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +308,7 @@ def _cleanup(*paths: str) -> None:
 
 
 def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") -> None:
-    """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per QSV reencodiert werden."""
+    """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per VAAPI reencodiert werden."""
     profile = QUALITY_PROFILES[profile_key]
     with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(src, tmp, log)
@@ -338,11 +322,11 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
         _cleanup(raw_hevc)  # nur fuer die RPU-Extraktion gebraucht, danach ueberfluessig
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
-        qsv_args = build_qsv_args(profile, profile["quality_fix"])
-        _run([FFMPEG, "-y", *QSV_INIT_ARGS, "-hwaccel", "qsv", "-hwaccel_output_format", "qsv",
-              "-i", mkv_src, "-map", "0:v:0",
-              "-c:v", "hevc_qsv", *qsv_args,
-              "-pix_fmt", "p010le", "-profile:v", "main10",
+        vaapi_args = build_vaapi_args(profile, profile["quality_fix"])
+        _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
+              "-vf", "format=p010,hwupload",
+              "-c:v", "hevc_vaapi", *vaapi_args,
+              "-profile:v", "main10",
               "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
               "-f", "hevc", new_hevc], log)
 
@@ -376,13 +360,13 @@ def can_downsize(mi: MediaInfo, threshold_mbps: float) -> bool:
 
 def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -> None:
     """Komprimiert eine bereits gesunde HDR10/Profile-8-Quelle nach - reine
-    Bitraten-Reduktion per QSV, keine Profilkonvertierung. DV-RPU (falls
+    Bitraten-Reduktion per VAAPI, keine Profilkonvertierung. DV-RPU (falls
     vorhanden) wird unveraendert durchgereicht (dovi_tool inject-rpu), genau wie
     in Downsizer.cs der Windows-App."""
     profile = QUALITY_PROFILES[profile_key]
     with _temp_dir("revision_") as tmp:
         mkv_src = _to_mkv_if_needed(mi.path, tmp, log)
-        qsv_args = build_qsv_args(profile, profile["quality_downsize"])
+        vaapi_args = build_vaapi_args(profile, profile["quality_downsize"])
         new_hevc = os.path.join(tmp, "new_base.hevc")
 
         if mi.dv_profile == "8":
@@ -395,9 +379,10 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
             _cleanup(raw_hevc)
 
-            _run([FFMPEG, "-y", "-i", mkv_src, *QSV_INIT_ARGS, "-map", "0:v:0",
-                  "-c:v", "hevc_qsv", *qsv_args,
-                  "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
+            _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
+                  "-vf", "format=p010,hwupload",
+                  "-c:v", "hevc_vaapi", *vaapi_args,
+                  "-f", "hevc", new_hevc], log)
 
             injected = os.path.join(tmp, "injected.hevc")
             _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu, "-o", injected], log)
@@ -405,7 +390,8 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
-            _run([FFMPEG, "-y", "-i", mkv_src, *QSV_INIT_ARGS, "-map", "0:v:0",
-                  "-c:v", "hevc_qsv", *qsv_args,
-                  "-pix_fmt", "p010le", "-f", "hevc", new_hevc], log)
+            _run([FFMPEG, "-y", "-vaapi_device", VAAPI_DEVICE, "-i", mkv_src, "-map", "0:v:0",
+                  "-vf", "format=p010,hwupload",
+                  "-c:v", "hevc_vaapi", *vaapi_args,
+                  "-f", "hevc", new_hevc], log)
             _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", mkv_src], log)

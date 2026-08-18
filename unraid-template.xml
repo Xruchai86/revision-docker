@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ReVision</Name>
+  <Repository>ghcr.io/xruchai86/revision-docker:latest</Repository>
+  <Registry>https://ghcr.io/xruchai86/revision-docker</Registry>
+  <Branch>
+    <Tag>latest</Tag>
+  </Branch>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/yourgithubuser/revision-docker</Support>
+  <Overview>
+Dolby-Vision-Profile (5/7/4/9/8.2/8.4/...) nach 8.1 fixen - über den Browser, mit Intel-VAAPI-Hardware-Beschleunigung für Core-Ultra-/Arrow-Lake-/Xe-Grafik. Web-Pendant zur Windows-App "ReVision" (WPF/NVENC).
+
+WICHTIG: Für Hardware-Beschleunigung muss die Intel-iGPU per /dev/dri an den Container durchgereicht werden (siehe Geräte-Zuordnung unten) - ohne diese Zuordnung schlägt jeder Reencode-Fix (Profile 5/9/...) fehl. Verlustfreie Fixes (Profile 7/4, Relabel) brauchen keine GPU.
+  </Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/yourgithubuser/revision-docker/main/icon.png</Icon>
+
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Port für die Weboberfläche" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+
+  <Config Name="Quellordner (kompletter Medien-Root)" Target="/media/source" Default="/mnt/user/Media" Mode="rw" Description="Kompletten Medien-Ordner einbinden (nicht nur einen einzelnen Unterordner) - innerhalb der App gibt's einen Ordner-Browser zum Navigieren/Auswählen, welcher Unterordner tatsächlich gescannt wird." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Media</Config>
+
+  <Config Name="Zielordner" Target="/media/output" Default="/mnt/user/Filme_Fertig" Mode="rw" Description="Zielordner für die gefixten Dateien (im Container: /media/output)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme_Fertig</Config>
+
+  <Config Name="Temp-Ordner" Target="/media/temp" Default="/mnt/user/Convert_Temp" Mode="rw" Description="Zwischendateien (MP4-Remux, RPU-Extraktion, Reencode-Zwischenschritte) - braucht bei 4K-Dateien schnell mehrere zig GB. UNBEDINGT auf einen Pfad mit viel freiem Speicher zeigen lassen (Array, nicht Cache/appdata) - sonst 'No space left on device' mitten im Job." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Convert_Temp</Config>
+
+  <Config Name="Einstellungen" Target="/config" Default="/mnt/user/appdata/revision" Mode="rw" Description="Speicherort für Einstellungen (Zielordner/Profil/Downsize-Schwelle) - übersteht Container-Neustarts" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/revision</Config>
+
+  <Config Name="Intel GPU (VAAPI)" Target="/dev/dri" Default="/dev/dri" Mode="" Description="Intel-iGPU für VAAPI-Reencodes durchreichen - ohne das schlägt jeder Reencode-Fix (Profile 5/9) fehl. Verlustfreie Fixes (Profile 7/4/Relabel) brauchen das nicht." Type="Device" Display="always" Required="true" Mask="false">/dev/dri</Config>
+</Container>
