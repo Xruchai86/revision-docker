@@ -19,6 +19,7 @@ DEFAULTS = {
     "quality_profile": "balanced",
     "downsize_threshold_mbps": 35.0,
     "target_bitrate_mbps": 30.0,  # 0/leer = Profil-Standardwert verwenden
+    "force_reencode_dual_layer": False,  # Profile 7/Dual-Layer immer neu encodieren statt nur EL zu verwerfen
 }
 
 

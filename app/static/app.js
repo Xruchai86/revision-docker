@@ -33,6 +33,8 @@ document.addEventListener("DOMContentLoaded", () => {
     saveSettingsField({ target_bitrate_mbps: parseFloat(e.target.value) }));
   document.getElementById("downsizeThreshold").addEventListener("change", e =>
     saveSettingsField({ downsize_threshold_mbps: parseFloat(e.target.value) || 35.0 }));
+  document.getElementById("forceReencodeCheck").addEventListener("change", e =>
+    saveSettingsField({ force_reencode_dual_layer: e.target.checked }));
 });
 
 // ---------------------------------------------------------------------------

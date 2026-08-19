@@ -90,6 +90,26 @@ getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
 habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
 erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
 
+## Dual-Layer/Profile 7 optional immer neu encodieren (neu)
+
+Beobachtet: eine 1:1-BD-Kopie (Profile 7, Dual-Layer, per DVDFab gerippt) spielte
+nach dem normalen (verlustfreien) Fix auf einer nativen LG-webOS-TV-App nicht mit
+Dolby Vision/Atmos ab, obwohl die Metadaten der Ausgabedatei nachweislich korrekt
+waren (per `mediainfo` verifiziert - Profile 8, RPU vorhanden, Atmos bitgenau
+erhalten). Auf einer Android-Box (die DV selbst verarbeitet) lief dieselbe Datei
+einwandfrei. Ein per Profile-5-Pfad **komplett neu encodierter** Film lief dagegen
+auch auf der LG-App problemlos - deckt sich mit einem bereits dokumentierten
+LG-webOS-Bug (native Player-Schwierigkeiten mit bestimmten MKV/DV-Bitstream-
+Strukturen, unabhängig von korrekten Metadaten).
+
+Neue Checkbox "Profile 7/Dual-Layer immer neu encodieren" (Standard: aus) - wenn
+aktiviert, läuft nach dem verlustfreien Dual-Layer-Fix **immer** derselbe VAAPI-
+Reencode-Durchlauf wie bei Downsize (RPU erhalten, Bild komplett neu encodiert),
+unabhängig von der Dateigröße/Downsize-Schwelle. Kostet GPU-Zeit und ist nicht
+mehr bit-identisch zum Original, kann aber genau dieses Abspielproblem umgehen.
+**Nur aktivieren, wenn du tatsächlich Kompatibilitätsprobleme hast** - der
+Standard-Fix bleibt der schnellere, verlustfreie Weg.
+
 ## Ziel-Bitrate-Regler statt fixer CQP-Werte (neu)
 
 CQP (Constant Quantization) ist szenen-adaptiv und garantiert **keine**

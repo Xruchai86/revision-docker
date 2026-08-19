@@ -51,6 +51,15 @@
     <button class="btn-gold" onclick="scan()" id="scanBtn" disabled>Scannen</button>
   </section>
 
+  <div class="status-line" style="margin-bottom:16px">
+    <label>
+      <input type="checkbox" id="forceReencodeCheck" {% if settings.force_reencode_dual_layer %}checked{% endif %}>
+      Profile 7/Dual-Layer immer neu encodieren (statt nur EL zu verwerfen) - kann
+      Abspielprobleme bei manchen Playern (z.B. native LG-webOS-App) beheben, kostet aber
+      GPU-Zeit statt des sonst verlustfreien, schnellen Fixes
+    </label>
+  </div>
+
   <div id="scanStatus" class="status-line"></div>
 
   <h2>Warteschlange</h2>

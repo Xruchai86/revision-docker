@@ -37,7 +37,8 @@ def _worker():
             else:
                 core.run_fix(mi, out_path, log, profile_key=job["profile"], target_bitrate_mbps=bitrate)
                 threshold = float(_settings.get("downsize_threshold_mbps", 35.0))
-                core.maybe_chain_downsize(mi, out_path, log, job["profile"], threshold, bitrate)
+                force_reencode = bool(_settings.get("force_reencode_dual_layer", False))
+                core.maybe_chain_downsize(mi, out_path, log, job["profile"], threshold, bitrate, force_reencode)
             job["status"] = "done"
             job["output_path"] = out_path
         except Exception as ex:  # noqa: BLE001 - Job-Fehler sollen den Worker nicht sterben lassen

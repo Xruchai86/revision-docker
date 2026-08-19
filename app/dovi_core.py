@@ -371,6 +371,16 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
         vaapi_args = build_vaapi_args(bitrate, profile["bframes"])
         new_hevc = os.path.join(tmp, "new_base.hevc")
 
+        # Diagnose: welcher Zweig wird genommen - DV-Erhalt oder reiner HDR10-
+        # Reencode ohne RPU? Bei mi.dv_profile != "8" geht die DV-RPU verloren,
+        # das soll hier sichtbar sein statt still zu passieren.
+        if mi.dv_profile == "8":
+            log(f"Downsize: DV-Profil 8 erkannt (dv_profile={mi.dv_profile!r}) - RPU wird erhalten.")
+        else:
+            log(f"Downsize: KEIN DV-Profil 8 erkannt (dv_profile={mi.dv_profile!r}) - "
+                "reiner HDR10-Reencode ohne RPU-Erhalt. Falls die Quelle eigentlich Dolby "
+                "Vision hatte, ist das ein Erkennungsproblem, kein gewolltes Verhalten.")
+
         if mi.dv_profile == "8":
             # DV-RPU vorhanden - extrahieren, BL neu encodieren, RPU unveraendert
             # wieder injizieren (Farbmetadaten bleiben exakt erhalten).
@@ -402,7 +412,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
 
 
 def maybe_chain_downsize(mi: MediaInfo, out_path: str, log, profile_key: str, threshold_mbps: float,
-                          target_bitrate_mbps: float | None = None) -> None:
+                          target_bitrate_mbps: float | None = None, force: bool = False) -> None:
     """Nach einem VERLUSTFREIEN Fix (Dual-Layer/Relabel) automatisch nachkomprimieren,
     falls das Ergebnis immer noch ueber der Downsize-Schwelle liegt - analog zu
     MaybeChainDownsizeAsync in der Windows-App. Nur fuer die verlustfreien Aktionen:
@@ -410,7 +420,16 @@ def maybe_chain_downsize(mi: MediaInfo, out_path: str, log, profile_key: str, th
     eine zusaetzliche Kompression waere dort eine unnoetige zweite Encoder-
     Generation (Qualitaetsverlust) ohne echten Nutzen. Ersetzt out_path direkt
     durch das kleinere Ergebnis, best-effort - ein Fehler hier laesst den
-    urspruenglichen (verlustfreien) Fix unangetastet bestehen."""
+    urspruenglichen (verlustfreien) Fix unangetastet bestehen.
+
+    force=True ueberspringt die Bitraten-Schwelle und reencodiert IMMER - fuer
+    Faelle, wo nicht die Dateigroesse das Ziel ist, sondern ein frisch encodierter
+    (statt des Original-Rip-)Bitstream gewuenscht ist. Hintergrund: beobachtet,
+    dass manche Player (native LG-webOS-App) den unveraenderten Original-Bitstream
+    nach einem reinen Dual-Layer-Discard nicht abspielen, waehrend ein komplett
+    neu encodierter Stream (wie er bei Profile 5 zwangsläufig entsteht) dort
+    problemlos lief - dieselbe Reencode-Pipeline jetzt auch fuer Profile 7 optional
+    nutzbar, unabhaengig von der Dateigroesse."""
     if mi.action not in ("dual_layer", "relabel"):
         return
 
@@ -420,19 +439,28 @@ def maybe_chain_downsize(mi: MediaInfo, out_path: str, log, profile_key: str, th
         log(f"Nachprüfung der Ergebnisgröße fehlgeschlagen: {ex}")
         return
 
-    if probed.bitrate_mbps <= threshold_mbps:
+    # Diagnose-Logging: zeigt genau, was probe() an der frisch gefixten Datei
+    # erkannt hat, BEVOR downsize() sich darauf verlaesst - falls DV/Atmos nach
+    # der Nachkompression fehlen sollten, zeigt das hier sofort, ob die Ursache
+    # schon in der Erkennung liegt (dv_profile falsch/leer erkannt) oder erst
+    # spaeter im downsize()-Schritt selbst.
+    log(f"Nachkompressions-Vorprüfung: dv_profile={probed.dv_profile!r}, "
+        f"is_hdr10={probed.is_hdr10}, bitrate={probed.bitrate_mbps:.1f} Mbit/s")
+
+    if not force and probed.bitrate_mbps <= threshold_mbps:
         return
 
-    log(f"Ergebnis liegt bei {probed.bitrate_mbps:.1f} Mbit/s (Schwelle {threshold_mbps:.1f}) - "
-        "verlustfreier Fix, also automatische Nachkompression ohne Qualitätsrisiko einer zweiten Generation.")
+    reason = "manuell erzwungen (Reencode statt Original-Bitstream)" if force else \
+        f"Ergebnis liegt bei {probed.bitrate_mbps:.1f} Mbit/s (Schwelle {threshold_mbps:.1f})"
+    log(f"{reason} - verlustfreier Fix, zusätzlicher Reencode-Durchlauf.")
 
     downsized_path = out_path + ".downsized.mkv"
     try:
         downsize(probed, downsized_path, log, profile_key, target_bitrate_mbps)
         os.replace(downsized_path, out_path)
-        log("Automatische Nachkompression abgeschlossen.")
+        log("Reencode-Durchlauf abgeschlossen.")
     except Exception as ex:  # noqa: BLE001
-        log(f"Automatische Nachkompression fehlgeschlagen (verlustfreies Fix-Ergebnis bleibt erhalten): {ex}")
+        log(f"Reencode-Durchlauf fehlgeschlagen (verlustfreies Fix-Ergebnis bleibt erhalten): {ex}")
         try:
             os.remove(downsized_path)
         except OSError:
