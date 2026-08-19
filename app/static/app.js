@@ -3,7 +3,7 @@ let browseCurrentPath = "";
 const ACTION_LABELS = {
   dual_layer: "Dual-Layer-Fix (verlustfrei)",
   relabel: "Relabel → 8.1 (verlustfrei)",
-  reencode: "Reencode-Fix (QSV)",
+  reencode: "Reencode-Fix (VAAPI)",
 };
 
 // Persistiert Zielordner/Profil/Schwelle serverseitig (settings.json), sobald
@@ -18,8 +18,19 @@ async function saveSettingsField(patch) {
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("outputFolder").addEventListener("change", e =>
     saveSettingsField({ output_folder: e.target.value }));
-  document.getElementById("profileSelect").addEventListener("change", e =>
-    saveSettingsField({ quality_profile: e.target.value }));
+  document.getElementById("profileSelect").addEventListener("change", e => {
+    saveSettingsField({ quality_profile: e.target.value });
+    // Profilwechsel setzt den Regler auf den Profil-Standardwert zurueck -
+    // der Nutzer kann danach weiterhin selbst nachjustieren.
+    const defaultMbps = window.PROFILE_TARGET_MBPS[e.target.value];
+    if (defaultMbps) {
+      document.getElementById("targetBitrateSlider").value = defaultMbps;
+      document.getElementById("targetBitrateValue").textContent = defaultMbps;
+      saveSettingsField({ target_bitrate_mbps: defaultMbps });
+    }
+  });
+  document.getElementById("targetBitrateSlider").addEventListener("change", e =>
+    saveSettingsField({ target_bitrate_mbps: parseFloat(e.target.value) }));
   document.getElementById("downsizeThreshold").addEventListener("change", e =>
     saveSettingsField({ downsize_threshold_mbps: parseFloat(e.target.value) || 35.0 }));
 });
@@ -136,6 +147,7 @@ async function processSelected() {
   const checked = Array.from(document.querySelectorAll(".rowcheck:checked"));
   const outputFolder = document.getElementById("outputFolder").value.trim();
   const profile = document.getElementById("profileSelect").value;
+  const target_bitrate_mbps = parseFloat(document.getElementById("targetBitrateSlider").value);
 
   if (checked.length === 0) { alert("Keine Datei angehakt."); return; }
   if (!outputFolder) { alert("Bitte einen Zielordner angeben."); return; }
@@ -146,13 +158,13 @@ async function processSelected() {
   if (fixPaths.length) {
     await fetch("/api/fix", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: fixPaths, output_folder: outputFolder, profile }),
+      body: JSON.stringify({ paths: fixPaths, output_folder: outputFolder, profile, target_bitrate_mbps }),
     });
   }
   if (downsizePaths.length) {
     await fetch("/api/downsize", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paths: downsizePaths, output_folder: outputFolder, profile }),
+      body: JSON.stringify({ paths: downsizePaths, output_folder: outputFolder, profile, target_bitrate_mbps }),
     });
   }
   closeResults();

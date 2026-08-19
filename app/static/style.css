@@ -50,6 +50,10 @@ tbody tr:hover { background: #1a1a1a; }
 .path-picker { display: flex; gap: 8px; }
 .path-picker input { flex: 1; cursor: default; }
 
+.bitrate-slider { display: flex; align-items: center; gap: 10px; }
+.bitrate-slider input[type="range"] { flex: 1; accent-color: var(--gold); }
+.bitrate-slider span { font-size: 13px; color: var(--gold); font-weight: 600; min-width: 28px; text-align: right; }
+
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex;
          align-items: center; justify-content: center; z-index: 50; }
 .modal-content { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;

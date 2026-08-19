@@ -31,10 +31,13 @@ def _worker():
             mi = _scan_cache[job["path"]]
             suffix = "_downsized" if job["job_type"] == "downsize" else "_DV81"
             out_path = os.path.join(job["output_folder"], _out_filename(mi, suffix))
+            bitrate = job.get("target_bitrate_mbps")
             if job["job_type"] == "downsize":
-                core.downsize(mi, out_path, log, profile_key=job["profile"])
+                core.downsize(mi, out_path, log, profile_key=job["profile"], target_bitrate_mbps=bitrate)
             else:
-                core.run_fix(mi, out_path, log, profile_key=job["profile"])
+                core.run_fix(mi, out_path, log, profile_key=job["profile"], target_bitrate_mbps=bitrate)
+                threshold = float(_settings.get("downsize_threshold_mbps", 35.0))
+                core.maybe_chain_downsize(mi, out_path, log, job["profile"], threshold, bitrate)
             job["status"] = "done"
             job["output_path"] = out_path
         except Exception as ex:  # noqa: BLE001 - Job-Fehler sollen den Worker nicht sterben lassen
@@ -143,7 +146,8 @@ def api_scan():
     return jsonify({"results": results, "downsize_threshold_mbps": threshold})
 
 
-def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: str) -> list[str]:
+def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: str,
+                 target_bitrate_mbps: float | None = None) -> list[str]:
     os.makedirs(output_folder, exist_ok=True)
     created = []
     for path in paths:
@@ -157,6 +161,7 @@ def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: st
             "output_folder": output_folder,
             "profile": profile,
             "job_type": job_type,
+            "target_bitrate_mbps": target_bitrate_mbps,
             "status": "queued",
             "log": [],
         }
@@ -173,9 +178,12 @@ def api_fix():
         return jsonify({"error": "Kein Zielordner angegeben."}), 400
     _settings["output_folder"] = output_folder
     _settings["quality_profile"] = data.get("profile", "balanced")
+    bitrate = data.get("target_bitrate_mbps")
+    if bitrate:
+        _settings["target_bitrate_mbps"] = float(bitrate)
     settings_store.save(_settings)
 
-    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "fix")
+    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "fix", bitrate)
     return jsonify({"job_ids": created})
 
 
@@ -187,9 +195,12 @@ def api_downsize():
         return jsonify({"error": "Kein Zielordner angegeben."}), 400
     _settings["output_folder"] = output_folder
     _settings["quality_profile"] = data.get("profile", "balanced")
+    bitrate = data.get("target_bitrate_mbps")
+    if bitrate:
+        _settings["target_bitrate_mbps"] = float(bitrate)
     settings_store.save(_settings)
 
-    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "downsize")
+    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "downsize", bitrate)
     return jsonify({"job_ids": created})
 
 

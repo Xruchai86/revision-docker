@@ -35,6 +35,15 @@
         {% endfor %}
       </select>
     </div>
+    <div class="field" style="flex:0 0 220px">
+      <label>Ziel-Bitrate Video (Mbit/s) - überschreibt Profil-Standard</label>
+      <div class="bitrate-slider">
+        <input type="range" id="targetBitrateSlider" min="5" max="60" step="1"
+               value="{{ settings.target_bitrate_mbps|int }}"
+               oninput="document.getElementById('targetBitrateValue').textContent = this.value">
+        <span id="targetBitrateValue">{{ settings.target_bitrate_mbps|int }}</span>
+      </div>
+    </div>
     <div class="field" style="flex:0 0 150px">
       <label>Downsize-Schwelle (Mbit/s)</label>
       <input type="number" id="downsizeThreshold" value="{{ settings.downsize_threshold_mbps }}">
@@ -94,6 +103,9 @@
 
 <script>
   window.SAVED_THRESHOLD = {{ settings.downsize_threshold_mbps }};
+  window.PROFILE_TARGET_MBPS = {
+    {% for key, p in profiles.items() %}"{{ key }}": {{ p.target_mbps }}{{ "," if not loop.last }}{% endfor %}
+  };
 </script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

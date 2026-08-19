@@ -20,6 +20,15 @@ Was JETZT funktioniert:
 - **Downsize** (neu) - für bereits gesunde HDR10/Profile-8-Dateien mit hoher
   Bitrate, inkl. DV-RPU-Erhalt bei Profile-8-Quellen (extrahieren, BL neu
   encodieren, unveränderte RPU wieder injizieren).
+- **Automatische Nachkompression nach dem Fix** (neu) - nach einem
+  verlustfreien Dual-Layer-Fix (typisch bei BD-Kopien/Profile 7) oder Relabel
+  wird automatisch nachkomprimiert, falls das Ergebnis noch über der
+  Downsize-Schwelle liegt. Grund: der Dual-Layer-Fix selbst ist bewusst
+  verlustfrei (wirft nur die Enhancement-Layer weg, encodiert nichts neu) -
+  das allein macht die Datei oft nur unwesentlich kleiner. Reencode-Fixes
+  (Profile 5/9) bekommen das NICHT zusätzlich - die sind durch den Fix selbst
+  schon angemessen klein, eine weitere Kompression wäre dort nur eine
+  unnötige zweite Encoder-Generation.
 - **Einstellungen-Persistenz** (neu) - Zielordner, Qualitätsprofil und
   Downsize-Schwelle landen in `/config/settings.json` und übersteht damit
   Container-Neustarts, solange das `/config`-Volume gemappt ist (siehe
@@ -32,7 +41,6 @@ Was JETZT funktioniert:
 **Noch NICHT portiert** (folgt bei Bedarf in weiteren Schritten):
 - SDR-Optimierung, Upscale, SDR→HDR-Remap
 - MP4-Export, Container-Wahl-Dialog bei DV+Atmos
-- Automatische Nachkompression nach dem Fix
 - VMAF-Qualitätsvergleich
 
 ## Ordner-Browser statt Pfade tippen (neu)
@@ -81,6 +89,42 @@ kommagetrennter `HDR_Format`-String) und wurde bisher nur an MakeMKV-Rips
 getestet, nicht an DVDFab-MP4s wie hier. Ob sie an derselben Stelle hakt,
 habe ich nicht geprüft - falls du dort ähnliche Dateien mit "kein Fix
 erkannt" siehst, sag Bescheid, dann schauen wir uns das dort genauso an.
+
+## Ziel-Bitrate-Regler statt fixer CQP-Werte (neu)
+
+CQP (Constant Quantization) ist szenen-adaptiv und garantiert **keine**
+Mindest-Bitrate - bei "einfachem" Bildmaterial (wenig Bewegung/Detail) fällt
+die Bitrate von sich aus, unabhängig vom QP-Wert. Beobachtet: "Maximale
+Qualität" (CQP 18) landete bei einem Realfilm nur bei ~9 Mbit/s im Schnitt -
+für eine "maximale Qualität"-Einstellung unerwartet niedrig, obwohl der
+Encoder technisch nichts falsch gemacht hat.
+
+Encoding läuft jetzt auf **VBR mit expliziter Ziel-Bitrate** statt CQP -
+direkte, vorhersehbare Kontrolle über die Zieldateigröße. Neuer Regler oben
+("Ziel-Bitrate Video") überschreibt den Profil-Standardwert:
+
+| Profil | Standard-Ziel-Bitrate |
+|---|---|
+| Schnell (Test) | 10 Mbit/s |
+| Kleinere Dateien | 14 Mbit/s |
+| Ausgewogen | 20 Mbit/s |
+| Maximale Qualität | 30 Mbit/s |
+
+Regler-Bereich: 5-60 Mbit/s, manuell nachjustierbar (z.B. 25-35 Mbit/s für
+Filme, wie ursprünglich gewünscht). `-maxrate` (1,5x Ziel) und `-bufsize`
+(2x Ziel) begrenzen kurzzeitige Spitzen, ohne die durchschnittliche Bitrate
+künstlich zu deckeln - Standard-VBR-Faktoren, keine Besonderheit.
+
+**Nachtrag (Profile aufgeräumt):** Die Profile enthielten noch Karteileichen
+aus der alten CQP-Ära (`preset`, `quality_fix/downsize/sdr`,
+`lookahead/lookahead_depth`) - Felder, die seit dem VBR-Umstieg von
+`build_vaapi_args()` gar nicht mehr gelesen wurden, aber den falschen
+Eindruck erweckt hätten, sie würden noch etwas bewirken. Entfernt - jedes
+Profil hat jetzt nur noch `name`, `bframes` und `target_mbps`, exakt das, was
+tatsächlich wirkt. Bewusst KEIN Ersatz für QSVs "Preset"-Konzept (Encoder-
+Geschwindigkeit/Qualitäts-Tradeoff) ergänzt, da sich dafür keine verlässlich
+dokumentierte Wertespanne für den konkreten Intel-iHD-Treiber finden ließ -
+lieber ehrlich weglassen als raten.
 
 ## Encoder-Backend: VAAPI statt QSV/oneVPL (finale Lösung nach mehreren Fehlschlägen)
 
@@ -165,12 +209,19 @@ Statt eines Platten-Pfads kann `/media/temp` auch direkt in den Arbeitsspeicher
 gelegt werden (tmpfs) - spart bei den vielen GB an Zwischendateien pro Job
 komplett das Festplatten-I/O. **Nur sinnvoll, wenn genug freier RAM da ist:**
 
-Peak-Speicherbedarf pro Job wurde optimiert (Zwischendateien werden jetzt so
-früh wie möglich gelöscht statt bis Jobende alle gleichzeitig zu liegen), liegt
-aber bei 4K-Dateien wie GoT trotzdem grob bei **25-30 GB pro laufendem Job**
-(Jobs laufen sequentiell, nie mehrere gleichzeitig - der Bedarf addiert sich
-also nicht). Plane entsprechend Puffer für Unraid selbst und andere Container
-ein, sonst droht ein OOM-Absturz des ganzen Servers, nicht nur des Containers.
+Peak-Speicherbedarf pro Job wurde **zweimal** optimiert: Zwischendateien werden
+so früh wie möglich gelöscht statt bis Jobende alle gleichzeitig zu liegen, UND
+die komplette Remux-Zwischenkopie der Quelldatei (früher ~15 GB pro Job, nur um
+am Ende die Audiospur rauszuziehen) entfällt jetzt komplett - Video-Extraktion,
+Encode und finales Audio-Muxen lesen alle direkt aus der Originaldatei. Neuer
+grober Richtwert bei 4K-Dateien wie GoT: **rund 15 GB pro laufendem Job**
+(dominiert von der rohen, unkomprimierten HEVC-Zwischendatei während der RPU-
+Extraktion) statt vorher ~25-30 GB. Jobs laufen weiterhin sequentiell, nie
+mehrere gleichzeitig - der Bedarf addiert sich also nicht. Plane trotzdem
+Puffer für Unraid selbst und andere Container ein, sonst droht ein OOM-Absturz
+des ganzen Servers, nicht nur des Containers - bei z.B. 32 GB Gesamt-RAM und
+~10 GB bereits belegt (22 GB frei) reicht der neue Bedarf von ~15 GB jetzt
+mit spürbarerem Puffer als vorher, aber immer noch nicht üppig.
 
 **Einrichtung in Unraid** (Container bearbeiten → unten **"Add another Path,
 Port, Variable"** → Typ auf **"Device"** oder direkt über die erweiterten

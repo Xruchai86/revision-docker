@@ -63,47 +63,44 @@ def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
 
 
 # ---------------------------------------------------------------------------
-# Qualitätsprofile - dieselben vier wie in ReVision (Ausgewogen/Maximale
-# Qualität/Kleinere Dateien/Schnell), mit den frueheren QSV-Werten (jetzt fuer VAAPI weiterverwendet)
-# uebernommen (inkl. der nachtraeglich ergaenzten extbrc/rdo/mbbrc/b_strategy-
-# Kopplung an Lookahead).
+# Qualitätsprofile - jetzt bereinigt auf das, was seit dem Umstieg von CQP auf
+# VBR tatsaechlich noch wirkt: nur target_mbps (die Ziel-Bitrate, der einzige
+# echte Qualitaets-/Groessenregler) und bframes. Fruehere Felder wie "preset",
+# "quality_fix/downsize/sdr" und "lookahead/lookahead_depth" waren aus der
+# QP-Aera und wurden von build_vaapi_args() gar nicht mehr gelesen - reine
+# Karteileichen, die den Eindruck erweckt haetten, sie wuerden noch etwas tun.
+# Bewusst KEIN "-compression_level"-Aequivalent zu QSVs Preset ergaenzt - dazu
+# fand sich keine verlaessliche, klar dokumentierte Wertespanne fuer den
+# konkreten Intel-iHD-Treiber, das waere sonst nur geraten gewesen.
 # ---------------------------------------------------------------------------
 QUALITY_PROFILES = {
-    "balanced": dict(
-        name="Ausgewogen (Standard)", preset="medium",
-        quality_fix=20, quality_downsize=20, quality_sdr=23,
-        bframes=3, lookahead=True, lookahead_depth=32,
-    ),
-    "max": dict(
-        name="Maximale Qualität (langsam)", preset="veryslow",
-        quality_fix=18, quality_downsize=18, quality_sdr=20,
-        bframes=4, lookahead=True, lookahead_depth=40,
-    ),
-    "smaller": dict(
-        name="Kleinere Dateien (schneller)", preset="fast",
-        quality_fix=23, quality_downsize=24, quality_sdr=26,
-        bframes=3, lookahead=True, lookahead_depth=20,
-    ),
-    "fast": dict(
-        name="Schnell (Entwurf/Test)", preset="veryfast",
-        quality_fix=24, quality_downsize=25, quality_sdr=27,
-        bframes=2, lookahead=False, lookahead_depth=8,
-    ),
+    "balanced": dict(name="Ausgewogen (Standard)", bframes=3, target_mbps=20),
+    "max": dict(name="Maximale Qualität (langsam)", bframes=4, target_mbps=30),
+    "smaller": dict(name="Kleinere Dateien (schneller)", bframes=3, target_mbps=14),
+    "fast": dict(name="Schnell (Entwurf/Test)", bframes=2, target_mbps=10),
 }
 
 
-def build_vaapi_args(profile: dict, qp: int) -> list[str]:
-    """Baut die hevc_vaapi-Argumentliste. CQP-Modus mit -qp (0-52, niedriger=
-    besser) statt -global_quality/ICQ - letzteres zeigte in mehreren Community-
-    Tests inkonsistente Skalierung je nach Treiber-Version, waehrend -qp direkt
-    aus 'ffmpeg -h encoder=hevc_vaapi' mit klarer, eindeutiger Bedeutung
-    dokumentiert ist. Kein Aequivalent zu QSVs extbrc/rdo/mbbrc/look_ahead -
-    das waren MediaSDK/oneVPL-spezifische Erweiterungen, VAAPIs Rate-Control
-    ist bewusst einfacher gehalten."""
+def build_vaapi_args(bitrate_mbps: float, bframes: int) -> list[str]:
+    """Baut die hevc_vaapi-Argumentliste. VBR mit expliziter Ziel-Bitrate statt
+    CQP - CQP ist szenen-adaptiv und garantiert KEINE Mindest-Bitrate: bei
+    "einfachem" Bildmaterial (wenig Bewegung/Detail) faellt die Bitrate von
+    sich aus, unabhaengig vom QP-Wert, teils deutlich niedriger als erwuenscht
+    (beobachtet: CQP 18 landete bei einem Realfilm nur bei ~9 Mbit/s im
+    Schnitt, obwohl "Maximale Qualitaet" gewaehlt war). VBR mit -maxrate/
+    -bufsize gibt eine direkte, vorhersehbare Kontrolle ueber die Zieldateigroesse -
+    genau das, was fuer eine "maximale Qualitaet"-Einstellung eigentlich erwartet wird.
+    maxrate = 1.5x, bufsize = 2x Zielwert - uebliche, konservative VBR-Faktoren.
+    bframes 2-4 ist der fuer Intel-Hardware-Encoding uebliche sinnvolle Bereich."""
+    target_kbps = int(bitrate_mbps * 1000)
+    max_kbps = int(target_kbps * 1.5)
+    buf_kbps = int(target_kbps * 2)
     return [
-        "-rc_mode", "CQP",
-        "-qp", str(qp),
-        "-bf", str(profile["bframes"]),
+        "-rc_mode", "VBR",
+        "-b:v", f"{target_kbps}k",
+        "-maxrate", f"{max_kbps}k",
+        "-bufsize", f"{buf_kbps}k",
+        "-bf", str(bframes),
     ]
 
 
@@ -238,24 +235,17 @@ def _run(cmd: list[str], log) -> None:
         raise RuntimeError(f"Befehl fehlgeschlagen (Exit {proc.returncode}): {' '.join(cmd)}")
 
 
-def _to_mkv_if_needed(src: str, tmp_dir: str, log) -> str:
-    if src.lower().endswith(".mp4"):
-        dst = os.path.join(tmp_dir, "src_remux.mkv")
-        _run([FFMPEG, "-y", "-i", src, "-c", "copy", dst], log)
-        return dst
-    return src
-
-
 def fix_dual_layer(src: str, out_path: str, log) -> None:
-    """Profile 7/4/... - verlustfrei, EL verwerfen. Kein Encoder involviert."""
+    """Profile 7/4/... - verlustfrei, EL verwerfen. Kein Encoder involviert.
+    Liest direkt aus der Originaldatei (src), keine Zwischenkopie mehr noetig -
+    mkvmerge kann Audiospuren auch direkt aus MP4 lesen, nicht nur aus MKV."""
     with _temp_dir("revision_") as tmp:
-        mkv_src = _to_mkv_if_needed(src, tmp, log)
         hevc_out = os.path.join(tmp, "video_p81.hevc")
 
         # ffmpeg (Annex-B-Extraktion) | dovi_tool -m 2 convert --discard - Pipe wie in der
         # Windows-App (ProcessRunner.RunPipedAsync-Aequivalent).
         p1 = subprocess.Popen(
-            [FFMPEG, "-i", mkv_src, "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"],
+            [FFMPEG, "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"],
             stdout=subprocess.PIPE,
         )
         p2 = subprocess.Popen(
@@ -268,18 +258,18 @@ def fix_dual_layer(src: str, out_path: str, log) -> None:
         if p1.returncode != 0 or p2.returncode != 0:
             raise RuntimeError("Dual-Layer-Fix fehlgeschlagen (ffmpeg/dovi_tool).")
 
-        _run([MKVMERGE, "-o", out_path, hevc_out, "--no-video", mkv_src], log)
+        _run([MKVMERGE, "-o", out_path, hevc_out, "--no-video", src], log)
 
 
 def fix_relabel(src: str, out_path: str, log) -> None:
     """Single-Layer MIT Base-Layer, falsch markiert (z.B. 8.2/8.4) - verlustfrei,
-    nur RPU-Kennung aendern, kein --discard (keine EL vorhanden)."""
+    nur RPU-Kennung aendern, kein --discard (keine EL vorhanden). Liest direkt
+    aus der Originaldatei, keine Zwischenkopie mehr noetig."""
     with _temp_dir("revision_") as tmp:
-        mkv_src = _to_mkv_if_needed(src, tmp, log)
         hevc_out = os.path.join(tmp, "video_p81.hevc")
 
         p1 = subprocess.Popen(
-            [FFMPEG, "-i", mkv_src, "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"],
+            [FFMPEG, "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"],
             stdout=subprocess.PIPE,
         )
         p2 = subprocess.Popen(
@@ -292,7 +282,7 @@ def fix_relabel(src: str, out_path: str, log) -> None:
         if p1.returncode != 0 or p2.returncode != 0:
             raise RuntimeError("Relabel-Fix fehlgeschlagen (ffmpeg/dovi_tool).")
 
-        _run([MKVMERGE, "-o", out_path, hevc_out, "--no-video", mkv_src], log)
+        _run([MKVMERGE, "-o", out_path, hevc_out, "--no-video", src], log)
 
 
 def _cleanup(*paths: str) -> None:
@@ -307,14 +297,20 @@ def _cleanup(*paths: str) -> None:
             pass
 
 
-def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") -> None:
-    """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per VAAPI reencodiert werden."""
+def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced",
+                  target_bitrate_mbps: float | None = None) -> None:
+    """Profile 5/9/... - keine nutzbare Base-Layer, MUSS per VAAPI reencodiert werden.
+    Liest Video-Extraktion, Encode UND das finale Audio-Muxen alle direkt aus der
+    Originaldatei (src) - KEINE komplette Zwischenkopie mehr (frueher ~15GB pro
+    Job nur um am Ende die Audiospur rauszuziehen). Senkt den Speicherbedarf im
+    Temp-Ordner deutlich, wichtig besonders bei RAM-basiertem Temp (tmpfs).
+    target_bitrate_mbps ueberschreibt den Profil-Standardwert, wenn gesetzt -
+    z.B. vom Bitrate-Regler in der Weboberflaeche."""
     profile = QUALITY_PROFILES[profile_key]
+    bitrate = target_bitrate_mbps if target_bitrate_mbps else profile["target_mbps"]
     with _temp_dir("revision_") as tmp:
-        mkv_src = _to_mkv_if_needed(src, tmp, log)
-
         raw_hevc = os.path.join(tmp, "orig.hevc")
-        _run([FFMPEG, "-y", "-i", mkv_src, "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+        _run([FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
               "-f", "hevc", raw_hevc], log)
 
         rpu_p8 = os.path.join(tmp, "rpu_p8.bin")
@@ -322,10 +318,10 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
         _cleanup(raw_hevc)  # nur fuer die RPU-Extraktion gebraucht, danach ueberfluessig
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
-        vaapi_args = build_vaapi_args(profile, profile["quality_fix"])
+        vaapi_args = build_vaapi_args(bitrate, profile["bframes"])
         _run([FFMPEG, "-y",
               "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-              "-i", mkv_src, "-map", "0:v:0",
+              "-i", src, "-map", "0:v:0",
               "-c:v", "hevc_vaapi", *vaapi_args,
               "-profile:v", "main10",
               "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
@@ -335,16 +331,17 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced") ->
         _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu_p8, "-o", injected], log)
         _cleanup(new_hevc, rpu_p8)  # beide in injected.hevc "aufgegangen", nicht mehr gebraucht
 
-        _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
+        _run([MKVMERGE, "-o", out_path, injected, "--no-video", src], log)
 
 
-def run_fix(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -> None:
+def run_fix(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
+            target_bitrate_mbps: float | None = None) -> None:
     if mi.action == "dual_layer":
         fix_dual_layer(mi.path, out_path, log)
     elif mi.action == "relabel":
         fix_relabel(mi.path, out_path, log)
     elif mi.action == "reencode":
-        fix_reencode(mi.path, out_path, log, profile_key)
+        fix_reencode(mi.path, out_path, log, profile_key, target_bitrate_mbps)
     else:
         raise RuntimeError(f"Kein Fix fuer Aktion '{mi.action}' definiert.")
 
@@ -359,22 +356,26 @@ def can_downsize(mi: MediaInfo, threshold_mbps: float) -> bool:
     return healthy and not needs_fix and mi.bitrate_mbps > threshold_mbps
 
 
-def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -> None:
+def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
+             target_bitrate_mbps: float | None = None) -> None:
     """Komprimiert eine bereits gesunde HDR10/Profile-8-Quelle nach - reine
     Bitraten-Reduktion per VAAPI, keine Profilkonvertierung. DV-RPU (falls
     vorhanden) wird unveraendert durchgereicht (dovi_tool inject-rpu), genau wie
-    in Downsizer.cs der Windows-App."""
+    in Downsizer.cs der Windows-App. Liest direkt aus der Originaldatei (mi.path),
+    keine Zwischenkopie mehr noetig. target_bitrate_mbps ueberschreibt den
+    Profil-Standardwert, wenn gesetzt."""
     profile = QUALITY_PROFILES[profile_key]
+    bitrate = target_bitrate_mbps if target_bitrate_mbps else profile["target_mbps"]
     with _temp_dir("revision_") as tmp:
-        mkv_src = _to_mkv_if_needed(mi.path, tmp, log)
-        vaapi_args = build_vaapi_args(profile, profile["quality_downsize"])
+        src = mi.path
+        vaapi_args = build_vaapi_args(bitrate, profile["bframes"])
         new_hevc = os.path.join(tmp, "new_base.hevc")
 
         if mi.dv_profile == "8":
             # DV-RPU vorhanden - extrahieren, BL neu encodieren, RPU unveraendert
             # wieder injizieren (Farbmetadaten bleiben exakt erhalten).
             raw_hevc = os.path.join(tmp, "orig.hevc")
-            _run([FFMPEG, "-y", "-i", mkv_src, "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
+            _run([FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
                   "-f", "hevc", raw_hevc], log)
             rpu = os.path.join(tmp, "rpu.bin")
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
@@ -382,19 +383,57 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced") -
 
             _run([FFMPEG, "-y",
                   "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-                  "-i", mkv_src, "-map", "0:v:0",
+                  "-i", src, "-map", "0:v:0",
                   "-c:v", "hevc_vaapi", *vaapi_args,
                   "-f", "hevc", new_hevc], log)
 
             injected = os.path.join(tmp, "injected.hevc")
             _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu, "-o", injected], log)
             _cleanup(new_hevc, rpu)
-            _run([MKVMERGE, "-o", out_path, injected, "--no-video", mkv_src], log)
+            _run([MKVMERGE, "-o", out_path, injected, "--no-video", src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
             _run([FFMPEG, "-y",
                   "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-                  "-i", mkv_src, "-map", "0:v:0",
+                  "-i", src, "-map", "0:v:0",
                   "-c:v", "hevc_vaapi", *vaapi_args,
                   "-f", "hevc", new_hevc], log)
-            _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", mkv_src], log)
+            _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", src], log)
+
+
+def maybe_chain_downsize(mi: MediaInfo, out_path: str, log, profile_key: str, threshold_mbps: float,
+                          target_bitrate_mbps: float | None = None) -> None:
+    """Nach einem VERLUSTFREIEN Fix (Dual-Layer/Relabel) automatisch nachkomprimieren,
+    falls das Ergebnis immer noch ueber der Downsize-Schwelle liegt - analog zu
+    MaybeChainDownsizeAsync in der Windows-App. Nur fuer die verlustfreien Aktionen:
+    Profile 5/9 (Reencode-Fix) sind durch den Fix selbst schon angemessen klein,
+    eine zusaetzliche Kompression waere dort eine unnoetige zweite Encoder-
+    Generation (Qualitaetsverlust) ohne echten Nutzen. Ersetzt out_path direkt
+    durch das kleinere Ergebnis, best-effort - ein Fehler hier laesst den
+    urspruenglichen (verlustfreien) Fix unangetastet bestehen."""
+    if mi.action not in ("dual_layer", "relabel"):
+        return
+
+    try:
+        probed = probe(out_path)
+    except Exception as ex:  # noqa: BLE001
+        log(f"Nachprüfung der Ergebnisgröße fehlgeschlagen: {ex}")
+        return
+
+    if probed.bitrate_mbps <= threshold_mbps:
+        return
+
+    log(f"Ergebnis liegt bei {probed.bitrate_mbps:.1f} Mbit/s (Schwelle {threshold_mbps:.1f}) - "
+        "verlustfreier Fix, also automatische Nachkompression ohne Qualitätsrisiko einer zweiten Generation.")
+
+    downsized_path = out_path + ".downsized.mkv"
+    try:
+        downsize(probed, downsized_path, log, profile_key, target_bitrate_mbps)
+        os.replace(downsized_path, out_path)
+        log("Automatische Nachkompression abgeschlossen.")
+    except Exception as ex:  # noqa: BLE001
+        log(f"Automatische Nachkompression fehlgeschlagen (verlustfreies Fix-Ergebnis bleibt erhalten): {ex}")
+        try:
+            os.remove(downsized_path)
+        except OSError:
+            pass
