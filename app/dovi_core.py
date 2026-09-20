@@ -101,6 +101,7 @@ CATEGORIES = {
 }
 
 QUALITY_PROFILES = {
+<<<<<<< HEAD
     # --- Realfilm ---
     "qsv_film": dict(
         name="Film – QSV (empfohlen)", categories=["film"],
@@ -166,6 +167,60 @@ QUALITY_PROFILES = {
     "cbr_fix": dict(
         name="VAAPI-Fallback – CBR (feste Größe)", categories=list(CATEGORIES),
         rc_mode="CBR", target_mbps=20, quality=None, bframes=3, b_depth=1,
+=======
+    # --- QSV/oneVPL: bevorzugt, seit die aktuelle Runtime (24.3.4 aus Intels
+    #     Repo) Arrow Lake korrekt erkennt. Kann zwei Dinge, die VAAPI fehlen:
+    #     echte Geschwindigkeits-Presets und Lookahead (vorausschauende
+    #     Bitverteilung statt rein reaktiver). Per vpl-inspect auf der Ziel-
+    #     hardware bestaetigt: HEVC MAIN10 mit P010 bis 16384x12288.
+    "qsv_archiv": dict(
+        name="Archiv – QSV maximale Qualität (langsam)", encoder="qsv",
+        preset="veryslow", rc_mode="ICQ", target_mbps=None, quality=20,
+        bframes=4, lookahead=40,
+    ),
+    "qsv_film": dict(
+        name="Film – QSV mit Bitraten-Deckel (empfohlen)", encoder="qsv",
+        preset="slow", rc_mode="QVBR", target_mbps=30, quality=22,
+        bframes=4, lookahead=32,
+>>>>>>> c96016fb23e644f61b2dfc4ea8d1299b1a6e622b
+    ),
+    "qsv_serie": dict(
+        name="Serie – QSV sparsamer", encoder="qsv",
+        preset="medium", rc_mode="QVBR", target_mbps=16, quality=24,
+        bframes=4, lookahead=24,
+    ),
+    "qsv_fast": dict(
+        name="Schnell – QSV (Entwurf/Test)", encoder="qsv",
+        preset="veryfast", rc_mode="VBR", target_mbps=12, quality=None,
+        bframes=2, lookahead=None,
+    ),
+    # --- VAAPI: bleibt als verlaesslicher Rueckfallweg. Laeuft unabhaengig von
+    #     Intels Repo, also auch dann, wenn die QSV-Runtime mal nicht
+    #     installiert werden konnte. Modi auf der Hardware getestet:
+    #     CQP/CBR/VBR/ICQ/QVBR gehen, AVBR nicht.
+    "qvbr_film": dict(
+        name="Film – VAAPI QVBR (Fallback)", rc_mode="QVBR",
+        target_mbps=30, quality=22, bframes=4, b_depth=3,
+    ),
+    "qvbr_serie": dict(
+        name="Serie – VAAPI QVBR (Fallback)", rc_mode="QVBR",
+        target_mbps=16, quality=24, bframes=4, b_depth=3,
+    ),
+    "icq_archiv": dict(
+        name="Archiv – VAAPI ICQ (Fallback)", rc_mode="ICQ",
+        target_mbps=None, quality=20, bframes=4, b_depth=3,
+    ),
+    "balanced": dict(
+        name="Ausgewogen – VAAPI VBR (Fallback)", rc_mode="VBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "cbr_fix": dict(
+        name="Feste Größe – VAAPI CBR (Fallback)", rc_mode="CBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "fast": dict(
+        name="Schnell – VAAPI CQP (Fallback)", rc_mode="CQP",
+        target_mbps=None, quality=24, bframes=2, b_depth=1,
     ),
 }
 
