@@ -87,40 +87,58 @@ def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
 # Bitrate, laut ffmpeg-Doku.
 # ---------------------------------------------------------------------------
 QUALITY_PROFILES = {
-    "qvbr_film": dict(
-        name="Film – QVBR (empfohlen)", rc_mode="QVBR",
-        target_mbps=30, quality=22, bframes=4, b_depth=3,
-    ),
-    "qvbr_serie": dict(
-        name="Serie – QVBR (sparsamer)", rc_mode="QVBR",
-        target_mbps=16, quality=24, bframes=4, b_depth=3,
-    ),
-    "icq_archiv": dict(
-        name="Archiv – ICQ (Qualität vor Größe)", rc_mode="ICQ",
-        target_mbps=None, quality=20, bframes=4, b_depth=3,
-    ),
-    "balanced": dict(
-        name="Ausgewogen – VBR (bisheriges Verhalten)", rc_mode="VBR",
-        target_mbps=20, quality=None, bframes=3, b_depth=1,
-    ),
-    "cbr_fix": dict(
-        name="Feste Größe – CBR", rc_mode="CBR",
-        target_mbps=20, quality=None, bframes=3, b_depth=1,
-    ),
-    "fast": dict(
-        name="Schnell – CQP (Entwurf/Test)", rc_mode="CQP",
-        target_mbps=None, quality=24, bframes=2, b_depth=1,
-    ),
-    # --- QSV/oneVPL (experimentell, siehe Kommentar unten) ---
-    "qsv_max": dict(
-        name="QSV – Maximale Qualität (experimentell)", encoder="qsv",
+    # --- QSV/oneVPL: bevorzugt, seit die aktuelle Runtime (24.3.4 aus Intels
+    #     Repo) Arrow Lake korrekt erkennt. Kann zwei Dinge, die VAAPI fehlen:
+    #     echte Geschwindigkeits-Presets und Lookahead (vorausschauende
+    #     Bitverteilung statt rein reaktiver). Per vpl-inspect auf der Ziel-
+    #     hardware bestaetigt: HEVC MAIN10 mit P010 bis 16384x12288.
+    "qsv_archiv": dict(
+        name="Archiv – QSV maximale Qualität (langsam)", encoder="qsv",
         preset="veryslow", rc_mode="ICQ", target_mbps=None, quality=20,
         bframes=4, lookahead=40,
     ),
     "qsv_film": dict(
-        name="QSV – Film mit Bitraten-Deckel (experimentell)", encoder="qsv",
+        name="Film – QSV mit Bitraten-Deckel (empfohlen)", encoder="qsv",
         preset="slow", rc_mode="QVBR", target_mbps=30, quality=22,
         bframes=4, lookahead=32,
+    ),
+    "qsv_serie": dict(
+        name="Serie – QSV sparsamer", encoder="qsv",
+        preset="medium", rc_mode="QVBR", target_mbps=16, quality=24,
+        bframes=4, lookahead=24,
+    ),
+    "qsv_fast": dict(
+        name="Schnell – QSV (Entwurf/Test)", encoder="qsv",
+        preset="veryfast", rc_mode="VBR", target_mbps=12, quality=None,
+        bframes=2, lookahead=None,
+    ),
+    # --- VAAPI: bleibt als verlaesslicher Rueckfallweg. Laeuft unabhaengig von
+    #     Intels Repo, also auch dann, wenn die QSV-Runtime mal nicht
+    #     installiert werden konnte. Modi auf der Hardware getestet:
+    #     CQP/CBR/VBR/ICQ/QVBR gehen, AVBR nicht.
+    "qvbr_film": dict(
+        name="Film – VAAPI QVBR (Fallback)", rc_mode="QVBR",
+        target_mbps=30, quality=22, bframes=4, b_depth=3,
+    ),
+    "qvbr_serie": dict(
+        name="Serie – VAAPI QVBR (Fallback)", rc_mode="QVBR",
+        target_mbps=16, quality=24, bframes=4, b_depth=3,
+    ),
+    "icq_archiv": dict(
+        name="Archiv – VAAPI ICQ (Fallback)", rc_mode="ICQ",
+        target_mbps=None, quality=20, bframes=4, b_depth=3,
+    ),
+    "balanced": dict(
+        name="Ausgewogen – VAAPI VBR (Fallback)", rc_mode="VBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "cbr_fix": dict(
+        name="Feste Größe – VAAPI CBR (Fallback)", rc_mode="CBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "fast": dict(
+        name="Schnell – VAAPI CQP (Fallback)", rc_mode="CQP",
+        target_mbps=None, quality=24, bframes=2, b_depth=1,
     ),
 }
 
@@ -206,8 +224,16 @@ def build_qsv_args(profile: dict, bitrate_mbps: float | None = None,
 
     la = profile.get("lookahead")
     if la:
+        # Diese vier Optionen haengen zusammen und werden bewusst NUR gemeinsam
+        # mit Lookahead gesetzt - dieselbe Kopplung, die schon in der Windows-App
+        # recherchiert wurde: look_ahead_depth wirkt laut ffmpeg-Doku ohne extbrc
+        # gar nicht. adaptive_i/adaptive_b lassen den Encoder I- und B-Frames
+        # szenenabhaengig platzieren statt starr, b_strategy erlaubt ihm, die
+        # B-Frame-Anzahl selbst zu waehlen. Alles Dinge, die erst mit
+        # Vorausschau sinnvoll sind.
         args += ["-look_ahead", "1", "-look_ahead_depth", str(la),
-                 "-extbrc", "1"]
+                 "-extbrc", "1",
+                 "-adaptive_i", "1", "-adaptive_b", "1", "-b_strategy", "1"]
     return args
 
 
