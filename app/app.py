@@ -178,7 +178,7 @@ def api_fix():
     if not output_folder:
         return jsonify({"error": "Kein Zielordner angegeben."}), 400
     _settings["output_folder"] = output_folder
-    _settings["quality_profile"] = data.get("profile", "balanced")
+    _settings["quality_profile"] = data.get("profile", "qvbr_film")
     bitrate = data.get("target_bitrate_mbps")
     if bitrate:
         _settings["target_bitrate_mbps"] = float(bitrate)
@@ -195,7 +195,7 @@ def api_downsize():
     if not output_folder:
         return jsonify({"error": "Kein Zielordner angegeben."}), 400
     _settings["output_folder"] = output_folder
-    _settings["quality_profile"] = data.get("profile", "balanced")
+    _settings["quality_profile"] = data.get("profile", "qvbr_film")
     bitrate = data.get("target_bitrate_mbps")
     if bitrate:
         _settings["target_bitrate_mbps"] = float(bitrate)

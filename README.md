@@ -110,6 +110,75 @@ mehr bit-identisch zum Original, kann aber genau dieses Abspielproblem umgehen.
 **Nur aktivieren, wenn du tatsächlich Kompatibilitätsprobleme hast** - der
 Standard-Fix bleibt der schnellere, verlustfreie Weg.
 
+## Qualitäts-Presets mit Rate-Control-Modi (neu)
+
+Statt nur einer Ziel-Bitrate gibt es jetzt sechs Presets, die Rate-Control-Modus,
+Bitrate, B-Frames und B-Frame-Pyramide kombinieren. Welche Modi hier auftauchen,
+wurde **auf der Ziel-Hardware einzeln getestet**, nicht aus der ffmpeg-Optionsliste
+abgeschrieben (die zeigt auch Modi, die der Treiber ablehnt):
+
+| Modus | Ergebnis auf Arrow Lake-S / iHD |
+|---|---|
+| CQP, CBR, VBR, ICQ, QVBR | unterstützt |
+| AVBR | vom Treiber abgelehnt (`Driver does not support AVBR RC mode`) |
+| `b_depth 3` | unterstützt |
+
+Die Presets:
+
+- **Film – QVBR (neuer Standard)**: Qualitätsziel MIT Bitraten-Deckel. Ruhige
+  Szenen dürfen sparen, komplexe bekommen was sie brauchen, die Obergrenze hält.
+  Das löst den ursprünglichen Konflikt zwischen CQP (unvorhersehbare Größe) und
+  reinem VBR (Bitrate unabhängig vom Bildinhalt).
+- **Serie – QVBR (sparsamer)**: gleiches Prinzip, niedrigere Zielwerte.
+- **Archiv – ICQ**: qualitätsgesteuert ohne Bitraten-Deckel, Größe bleibt
+  inhaltsabhängig.
+- **Ausgewogen – VBR**: exakt das bisherige Verhalten, unverändert verfügbar.
+- **Feste Größe – CBR**: konstante Bitrate für planbare Dateigrößen.
+- **Schnell – CQP**: Entwurf/Test.
+
+Zusätzlich neu in allen Presets: **`b_depth`** (hierarchische B-Frames, laut
+ffmpeg-Doku bessere Kompressionseffizienz bei gleicher Bitrate) und
+**`async_depth`** (mehr Parallelität, reines Tempo).
+
+Der Bitraten-Regler überschreibt weiterhin den Preset-Standardwert, ohne das
+Preset zu verlassen. Alte gespeicherte Profilnamen (`max`, `smaller`) fallen
+automatisch auf den neuen Standard zurück statt abzustürzen.
+
+## QSV/oneVPL – zweiter Versuch mit aktueller Runtime (experimentell)
+
+**Warum es beim ersten Mal scheiterte (neue Erkenntnis):** Ubuntu 24.04 liefert
+`libmfx-gen1.2` in **Version 23.2.3** – Stand 2023, via packages.ubuntu.com
+verifiziert. Arrow Lake kam erst **Oktober 2024** auf den Markt. Diese
+oneVPL-Runtime kann die Geräte-IDs dieser Chip-Generation schlicht nicht kennen.
+Das erklärt sauber, warum VAAPI (eigener, aktueller iHD-Treiber) lief, QSV aber
+nie ansprang – und warum die damaligen Fixes nichts brachten: sie zielten alle
+auf die ffmpeg-Kommandozeile, während das Problem in der Laufzeitbibliothek saß.
+
+**Was sich geändert hat:** Die Medien-Laufzeit kommt jetzt aus Intels offiziellem
+Client-GPU-Repository statt aus den Ubuntu-Quellen (Repo-Zeile und Paketliste
+aus Intels eigener Installationsdoku übernommen). Damit sollten aktuelle
+Geräte-IDs inklusive Arrow Lake vorhanden sein.
+
+**Warum QSV überhaupt interessant ist** – es kann zwei Dinge, die dem
+VAAPI-Pfad komplett fehlen:
+
+- **Echte Geschwindigkeits-Presets** (`veryslow` … `veryfast`), also ein echter
+  Tempo/Qualitäts-Tradeoff. Genau das, was wir bei VAAPI bewusst weggelassen
+  haben, weil sich für `-compression_level` keine verlässliche Wertespanne fand.
+- **Lookahead** – der Encoder schaut kommende Frames voraus und verteilt Bits
+  vorausschauend. `extbrc` ist daran gekoppelt, weil `look_ahead_depth` laut
+  ffmpeg-Doku ohne `extbrc` wirkungslos bleibt.
+
+Zwei neue Presets, beide ausdrücklich als **experimentell** gekennzeichnet:
+`QSV – Maximale Qualität` (veryslow + ICQ + Lookahead 40) und
+`QSV – Film mit Bitraten-Deckel` (slow + QVBR + Lookahead 32).
+
+**Ehrlich zum Status:** Ob QSV auf der Hardware jetzt wirklich läuft, ist
+**nicht verifiziert** – das kann nur ein echter Testlauf zeigen. Die
+VAAPI-Presets bleiben deshalb Standard und unverändert; die QSV-Presets sind ein
+Angebot zum Ausprobieren, kein Ersatz. Schlägt QSV fehl, betrifft das nur den
+jeweiligen Job, nicht die App.
+
 ## Ziel-Bitrate-Regler statt fixer CQP-Werte (neu)
 
 CQP (Constant Quantization) ist szenen-adaptiv und garantiert **keine**

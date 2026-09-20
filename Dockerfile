@@ -4,13 +4,25 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ffmpeg (Ubuntu 24.04 bringt QSV/VAAPI-Unterstuetzung bereits mit - Build nutzt
 # den modernen oneVPL-Pfad, "--enable-libvpl --disable-libmfx", kein Legacy-MediaSDK),
-# intel-media-va-driver-non-free (iHD-VAAPI-Treiber fuer Core-Ultra/Xe-Grafik),
-# libmfx-gen1.2 (oneVPL-Laufzeit-Backend speziell fuer neuere "Gen"-GPUs wie Meteor
-# Lake/Core Ultra - OHNE dieses Paket findet ffmpeg keine QSV-Session, Fehler
-# "MFX_ERR_NOT_FOUND" - Paketname fuer Ubuntu 24.04/noble via packages.ubuntu.com
-# verifiziert, nicht geraten), libmfx1 + libvpl2 als zugehoerige Laufzeit-Bibliotheken,
-# mkvtoolnix (mkvmerge) und mediainfo fuer die Profilerkennung.
+# intel-media-va-driver-non-free (iHD-VAAPI-Treiber), mkvtoolnix (mkvmerge) und
+# mediainfo fuer die Profilerkennung.
+#
+# WICHTIG - oneVPL/QSV-Laufzeit kommt NICHT aus den Ubuntu-Quellen:
+# Ubuntu 24.04 liefert libmfx-gen1.2 in Version 23.2.3 (Stand 2023, via
+# packages.ubuntu.com verifiziert). Arrow Lake kam erst im Oktober 2024 -
+# diese Runtime kennt die Geraete-IDs dieser Generation schlicht nicht. Das ist
+# die wahrscheinlichste Ursache dafuer, dass QSV auf der Zielhardware trotz
+# funktionierendem VAAPI nie ansprang ("MFX_ERR_NOT_FOUND", spaeter
+# "Error setting child device handle: -17"). Deshalb wird die Medien-Laufzeit
+# aus Intels offiziellem Client-GPU-Repository installiert (Paketliste und
+# Repo-Zeile aus Intels eigener Installationsdoku uebernommen, nicht geraten).
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    gpg-agent ca-certificates curl \
+    && curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key \
+        | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble client" \
+        > /etc/apt/sources.list.d/intel-gpu-noble.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     mkvtoolnix \
     mediainfo \
@@ -18,9 +30,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmfx1 \
     libmfx-gen1.2 \
     libvpl2 \
+    libvpl-tools \
+    va-driver-all \
     vainfo \
     python3 python3-pip \
-    curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # dovi_tool - offizielles Release-Binary, fest auf eine geprüfte Version gepinnt.

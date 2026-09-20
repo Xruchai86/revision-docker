@@ -113,7 +113,8 @@
 <script>
   window.SAVED_THRESHOLD = {{ settings.downsize_threshold_mbps }};
   window.PROFILE_TARGET_MBPS = {
-    {% for key, p in profiles.items() %}"{{ key }}": {{ p.target_mbps }}{{ "," if not loop.last }}{% endfor %}
+    {# None muss als JS-null raus, sonst ungueltige Syntax bei ICQ/CQP-Presets #}
+    {% for key, p in profiles.items() %}"{{ key }}": {{ p.target_mbps if p.target_mbps else "null" }}{{ "," if not loop.last }}{% endfor %}
   };
 </script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>

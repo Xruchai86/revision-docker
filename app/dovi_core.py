@@ -63,45 +63,176 @@ def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
 
 
 # ---------------------------------------------------------------------------
-# Qualitätsprofile - jetzt bereinigt auf das, was seit dem Umstieg von CQP auf
-# VBR tatsaechlich noch wirkt: nur target_mbps (die Ziel-Bitrate, der einzige
-# echte Qualitaets-/Groessenregler) und bframes. Fruehere Felder wie "preset",
-# "quality_fix/downsize/sdr" und "lookahead/lookahead_depth" waren aus der
-# QP-Aera und wurden von build_vaapi_args() gar nicht mehr gelesen - reine
-# Karteileichen, die den Eindruck erweckt haetten, sie wuerden noch etwas tun.
-# Bewusst KEIN "-compression_level"-Aequivalent zu QSVs Preset ergaenzt - dazu
-# fand sich keine verlaessliche, klar dokumentierte Wertespanne fuer den
-# konkreten Intel-iHD-Treiber, das waere sonst nur geraten gewesen.
+# Qualitäts-Presets: kombinieren Rate-Control-Modus, Ziel-Bitrate, B-Frames und
+# B-Frame-Pyramide (b_depth). Welche rc_modes hier auftauchen, ist NICHT geraten,
+# sondern auf der Ziel-Hardware (Arrow Lake-S, iHD-Treiber) einzeln getestet:
+#   CQP, CBR, VBR, ICQ, QVBR = unterstuetzt; AVBR = vom Treiber abgelehnt
+#   ("Driver does not support AVBR RC mode") -> taucht hier bewusst nicht auf.
+#   b_depth 3 ebenfalls getestet und akzeptiert.
+#
+# Die Modi im Ueberblick (ffmpeg-Doku):
+#   CQP  - konstante Qualitaet, KEINE Bitraten-Garantie (szenenabhaengig, kann
+#          bei "einfachem" Material weit unter den Erwartungen landen - genau
+#          das Problem, das uns urspruenglich zum Wechsel auf VBR brachte)
+#   VBR  - Ziel-Bitrate mit Spitzen-Begrenzung, vorhersehbare Dateigroesse
+#   ICQ  - "intelligent constant quality": qualitaetsgesteuert, aber adaptiver
+#          als CQP. Dateigroesse weiterhin inhaltsabhaengig.
+#   QVBR - qualitaetsgesteuert MIT Bitraten-Deckel. Der Kompromiss aus beidem:
+#          ruhige Szenen duerfen sparen, komplexe bekommen was sie brauchen,
+#          aber die Obergrenze haelt.
+#   CBR  - konstante Bitrate, fuer wirklich planbare Dateigroessen
+#
+# b_depth > 1 aktiviert hierarchische B-Frames (mehrere B-Ebenen, die sich
+# gegenseitig referenzieren) - bessere Kompressionseffizienz bei gleicher
+# Bitrate, laut ffmpeg-Doku.
 # ---------------------------------------------------------------------------
 QUALITY_PROFILES = {
-    "balanced": dict(name="Ausgewogen (Standard)", bframes=3, target_mbps=20),
-    "max": dict(name="Maximale Qualität (langsam)", bframes=4, target_mbps=30),
-    "smaller": dict(name="Kleinere Dateien (schneller)", bframes=3, target_mbps=14),
-    "fast": dict(name="Schnell (Entwurf/Test)", bframes=2, target_mbps=10),
+    "qvbr_film": dict(
+        name="Film – QVBR (empfohlen)", rc_mode="QVBR",
+        target_mbps=30, quality=22, bframes=4, b_depth=3,
+    ),
+    "qvbr_serie": dict(
+        name="Serie – QVBR (sparsamer)", rc_mode="QVBR",
+        target_mbps=16, quality=24, bframes=4, b_depth=3,
+    ),
+    "icq_archiv": dict(
+        name="Archiv – ICQ (Qualität vor Größe)", rc_mode="ICQ",
+        target_mbps=None, quality=20, bframes=4, b_depth=3,
+    ),
+    "balanced": dict(
+        name="Ausgewogen – VBR (bisheriges Verhalten)", rc_mode="VBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "cbr_fix": dict(
+        name="Feste Größe – CBR", rc_mode="CBR",
+        target_mbps=20, quality=None, bframes=3, b_depth=1,
+    ),
+    "fast": dict(
+        name="Schnell – CQP (Entwurf/Test)", rc_mode="CQP",
+        target_mbps=None, quality=24, bframes=2, b_depth=1,
+    ),
+    # --- QSV/oneVPL (experimentell, siehe Kommentar unten) ---
+    "qsv_max": dict(
+        name="QSV – Maximale Qualität (experimentell)", encoder="qsv",
+        preset="veryslow", rc_mode="ICQ", target_mbps=None, quality=20,
+        bframes=4, lookahead=40,
+    ),
+    "qsv_film": dict(
+        name="QSV – Film mit Bitraten-Deckel (experimentell)", encoder="qsv",
+        preset="slow", rc_mode="QVBR", target_mbps=30, quality=22,
+        bframes=4, lookahead=32,
+    ),
 }
 
+DEFAULT_PROFILE = "qvbr_film"
 
-def build_vaapi_args(bitrate_mbps: float, bframes: int) -> list[str]:
-    """Baut die hevc_vaapi-Argumentliste. VBR mit expliziter Ziel-Bitrate statt
-    CQP - CQP ist szenen-adaptiv und garantiert KEINE Mindest-Bitrate: bei
-    "einfachem" Bildmaterial (wenig Bewegung/Detail) faellt die Bitrate von
-    sich aus, unabhaengig vom QP-Wert, teils deutlich niedriger als erwuenscht
-    (beobachtet: CQP 18 landete bei einem Realfilm nur bei ~9 Mbit/s im
-    Schnitt, obwohl "Maximale Qualitaet" gewaehlt war). VBR mit -maxrate/
-    -bufsize gibt eine direkte, vorhersehbare Kontrolle ueber die Zieldateigroesse -
-    genau das, was fuer eine "maximale Qualitaet"-Einstellung eigentlich erwartet wird.
-    maxrate = 1.5x, bufsize = 2x Zielwert - uebliche, konservative VBR-Faktoren.
-    bframes 2-4 ist der fuer Intel-Hardware-Encoding uebliche sinnvolle Bereich."""
-    target_kbps = int(bitrate_mbps * 1000)
-    max_kbps = int(target_kbps * 1.5)
-    buf_kbps = int(target_kbps * 2)
-    return [
-        "-rc_mode", "VBR",
-        "-b:v", f"{target_kbps}k",
-        "-maxrate", f"{max_kbps}k",
-        "-bufsize", f"{buf_kbps}k",
-        "-bf", str(bframes),
-    ]
+
+def build_vaapi_args(profile: dict, bitrate_mbps: float | None = None,
+                     quality: int | None = None, async_depth: int = 4) -> list[str]:
+    """Baut die hevc_vaapi-Argumentliste passend zum rc_mode des Presets.
+
+    Jeder Modus braucht andere Parameter - falsche Kombinationen laesst der
+    Treiber entweder fallen oder lehnt sie ab, deshalb hier sauber getrennt:
+      CQP       -> nur -qp
+      ICQ       -> nur -global_quality (Bitrate waere wirkungslos)
+      VBR/CBR   -> Bitrate (+ maxrate/bufsize bei VBR)
+      QVBR      -> Bitrate UND -global_quality (Qualitaetsziel + Deckel)
+
+    bitrate_mbps/quality ueberschreiben die Preset-Werte, wenn gesetzt - so
+    wirkt der Bitraten-Regler der Oberflaeche weiterhin, ohne das Preset zu
+    verlassen. async_depth erhoeht nur die Parallelitaet (Tempo), nicht die
+    Qualitaet."""
+    rc = profile["rc_mode"]
+    bitrate = bitrate_mbps if bitrate_mbps else profile.get("target_mbps")
+    q = quality if quality else profile.get("quality")
+
+    args = ["-rc_mode", rc]
+
+    if rc == "CQP":
+        args += ["-qp", str(q or 24)]
+    elif rc == "ICQ":
+        args += ["-global_quality", str(q or 22)]
+    elif rc in ("VBR", "QVBR", "CBR"):
+        target_kbps = int((bitrate or 20) * 1000)
+        args += ["-b:v", f"{target_kbps}k"]
+        if rc == "VBR":
+            args += ["-maxrate", f"{int(target_kbps * 1.5)}k",
+                     "-bufsize", f"{int(target_kbps * 2)}k"]
+        elif rc == "QVBR":
+            # QVBR kombiniert Qualitaetsziel mit Bitraten-Deckel: maxrate ist
+            # hier die eigentliche Obergrenze, -global_quality das Ziel.
+            args += ["-maxrate", f"{int(target_kbps * 1.5)}k",
+                     "-bufsize", f"{int(target_kbps * 2)}k",
+                     "-global_quality", str(q or 22)]
+
+    args += ["-bf", str(profile["bframes"]), "-b_depth", str(profile.get("b_depth", 1))]
+    if async_depth:
+        args += ["-async_depth", str(async_depth)]
+    return args
+
+
+def build_qsv_args(profile: dict, bitrate_mbps: float | None = None,
+                   quality: int | None = None) -> list[str]:
+    """Baut die hevc_qsv-Argumentliste. QSV/oneVPL kann zwei Dinge, die VAAPI
+    NICHT bietet und die der eigentliche Grund sind, es ueberhaupt nochmal zu
+    versuchen: echte Geschwindigkeits-Presets (veryslow..veryfast, also ein
+    echter Tempo/Qualitaets-Tradeoff) und Lookahead. Lookahead laesst den
+    Encoder kommende Frames vorausschauen und Bits vorausschauend verteilen -
+    das fehlt dem VAAPI-Pfad komplett.
+
+    extbrc ist an den Lookahead gekoppelt: laut ffmpeg-Doku wirkt
+    look_ahead_depth ohne extbrc gar nicht (dieselbe Kopplung, die schon in der
+    Windows-App und der frueheren QSV-Fassung dieser App drin war)."""
+    bitrate = bitrate_mbps if bitrate_mbps else profile.get("target_mbps")
+    q = quality if quality else profile.get("quality")
+    rc = profile["rc_mode"]
+
+    args = ["-preset", profile.get("preset", "medium")]
+
+    if rc == "ICQ":
+        args += ["-global_quality", str(q or 22)]
+    elif rc == "QVBR":
+        target_kbps = int((bitrate or 20) * 1000)
+        args += ["-b:v", f"{target_kbps}k",
+                 "-maxrate", f"{int(target_kbps * 1.5)}k",
+                 "-global_quality", str(q or 22)]
+    elif rc == "CQP":
+        args += ["-q", str(q or 24)]
+    else:  # VBR/CBR
+        target_kbps = int((bitrate or 20) * 1000)
+        args += ["-b:v", f"{target_kbps}k", "-maxrate", f"{int(target_kbps * 1.5)}k"]
+
+    args += ["-bf", str(profile["bframes"])]
+
+    la = profile.get("lookahead")
+    if la:
+        args += ["-look_ahead", "1", "-look_ahead_depth", str(la),
+                 "-extbrc", "1"]
+    return args
+
+
+def build_encode_cmd(profile: dict, src: str, out_hevc: str,
+                     bitrate_mbps: float | None = None,
+                     extra_out_args: list[str] | None = None) -> list[str]:
+    """Baut den kompletten ffmpeg-Encode-Befehl - inkl. der Encoder-Weiche
+    zwischen VAAPI (Standard, bewaehrt) und QSV (experimentell).
+
+    Der Unterschied steckt nicht nur im Codec-Namen: VAAPI und QSV brauchen
+    unterschiedliche Hardware-Initialisierung VOR der Eingabedatei, deshalb
+    wird der Befehl hier an einer Stelle gebaut statt an drei Stellen
+    dupliziert."""
+    if profile.get("encoder") == "qsv":
+        pre = ["-hwaccel", "qsv", "-qsv_device", VAAPI_DEVICE,
+               "-hwaccel_output_format", "qsv"]
+        codec, enc_args = "hevc_qsv", build_qsv_args(profile, bitrate_mbps)
+    else:
+        pre = ["-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE,
+               "-hwaccel_output_format", "vaapi"]
+        codec, enc_args = "hevc_vaapi", build_vaapi_args(profile, bitrate_mbps)
+
+    return [FFMPEG, "-y", *pre, "-i", src, "-map", "0:v:0",
+            "-c:v", codec, *enc_args, *(extra_out_args or []),
+            "-f", "hevc", out_hevc]
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +437,8 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced",
     Temp-Ordner deutlich, wichtig besonders bei RAM-basiertem Temp (tmpfs).
     target_bitrate_mbps ueberschreibt den Profil-Standardwert, wenn gesetzt -
     z.B. vom Bitrate-Regler in der Weboberflaeche."""
-    profile = QUALITY_PROFILES[profile_key]
-    bitrate = target_bitrate_mbps if target_bitrate_mbps else profile["target_mbps"]
+    profile = QUALITY_PROFILES.get(profile_key) or QUALITY_PROFILES[DEFAULT_PROFILE]
+    bitrate = target_bitrate_mbps
     with _temp_dir("revision_") as tmp:
         raw_hevc = os.path.join(tmp, "orig.hevc")
         _run([FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb",
@@ -318,14 +449,10 @@ def fix_reencode(src: str, out_path: str, log, profile_key: str = "balanced",
         _cleanup(raw_hevc)  # nur fuer die RPU-Extraktion gebraucht, danach ueberfluessig
 
         new_hevc = os.path.join(tmp, "new_base.hevc")
-        vaapi_args = build_vaapi_args(bitrate, profile["bframes"])
-        _run([FFMPEG, "-y",
-              "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-              "-i", src, "-map", "0:v:0",
-              "-c:v", "hevc_vaapi", *vaapi_args,
-              "-profile:v", "main10",
-              "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
-              "-f", "hevc", new_hevc], log)
+        _run(build_encode_cmd(profile, src, new_hevc, bitrate, extra_out_args=[
+            "-profile:v", "main10",
+            "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        ]), log)
 
         injected = os.path.join(tmp, "injected.hevc")
         _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu_p8, "-o", injected], log)
@@ -364,11 +491,10 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
     in Downsizer.cs der Windows-App. Liest direkt aus der Originaldatei (mi.path),
     keine Zwischenkopie mehr noetig. target_bitrate_mbps ueberschreibt den
     Profil-Standardwert, wenn gesetzt."""
-    profile = QUALITY_PROFILES[profile_key]
-    bitrate = target_bitrate_mbps if target_bitrate_mbps else profile["target_mbps"]
+    profile = QUALITY_PROFILES.get(profile_key) or QUALITY_PROFILES[DEFAULT_PROFILE]
+    bitrate = target_bitrate_mbps
     with _temp_dir("revision_") as tmp:
         src = mi.path
-        vaapi_args = build_vaapi_args(bitrate, profile["bframes"])
         new_hevc = os.path.join(tmp, "new_base.hevc")
 
         # Diagnose: welcher Zweig wird genommen - DV-Erhalt oder reiner HDR10-
@@ -391,11 +517,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
             _run([DOVI_TOOL, "-m", "2", "extract-rpu", raw_hevc, "-o", rpu], log)
             _cleanup(raw_hevc)
 
-            _run([FFMPEG, "-y",
-                  "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-                  "-i", src, "-map", "0:v:0",
-                  "-c:v", "hevc_vaapi", *vaapi_args,
-                  "-f", "hevc", new_hevc], log)
+            _run(build_encode_cmd(profile, src, new_hevc, bitrate), log)
 
             injected = os.path.join(tmp, "injected.hevc")
             _run([DOVI_TOOL, "inject-rpu", "-i", new_hevc, "--rpu-in", rpu, "-o", injected], log)
@@ -403,11 +525,7 @@ def downsize(mi: MediaInfo, out_path: str, log, profile_key: str = "balanced",
             _run([MKVMERGE, "-o", out_path, injected, "--no-video", src], log)
         else:
             # Reines HDR10 ohne DV - keine RPU-Behandlung noetig, direkter Reencode.
-            _run([FFMPEG, "-y",
-                  "-hwaccel", "vaapi", "-hwaccel_device", VAAPI_DEVICE, "-hwaccel_output_format", "vaapi",
-                  "-i", src, "-map", "0:v:0",
-                  "-c:v", "hevc_vaapi", *vaapi_args,
-                  "-f", "hevc", new_hevc], log)
+            _run(build_encode_cmd(profile, src, new_hevc, bitrate), log)
             _run([MKVMERGE, "-o", out_path, new_hevc, "--no-video", src], log)
 
 

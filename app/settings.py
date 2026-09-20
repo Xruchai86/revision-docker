@@ -16,7 +16,7 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/config/settings.json")
 
 DEFAULTS = {
     "output_folder": "",
-    "quality_profile": "balanced",
+    "quality_profile": "qvbr_film",  # QVBR: Qualitätsziel mit Bitraten-Deckel
     "downsize_threshold_mbps": 35.0,
     "target_bitrate_mbps": 30.0,  # 0/leer = Profil-Standardwert verwenden
     "force_reencode_dual_layer": False,  # Profile 7/Dual-Layer immer neu encodieren statt nur EL zu verwerfen
