@@ -18,15 +18,20 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Repo-Zeile aus Intels eigener Installationsdoku uebernommen, nicht geraten).
 # Schritt 1 - Basis aus den Ubuntu-Quellen. Bewusst als EIGENER Schritt, damit
 # der Build auch dann durchlaeuft, wenn Intels Repository (Schritt 2) nicht
-# erreichbar ist oder Paketnamen aendert: VAAPI ist der Standard-Pfad und haengt
-# NICHT an Intels Repo. Nur QSV wuerde dann auf der alten Runtime bleiben.
+# erreichbar ist: VAAPI ist der Standard-Pfad und haengt NICHT an Intels Repo.
+#
+# Bewusst NICHT mehr dabei: libmfx1 (Legacy-MediaSDK 22.5.4) und libmfx-gen1.2
+# (Ubuntu-Stand 23.2.3). Beide sind aelter als Arrow Lake. "vpl-inspect" zeigte
+# mit ihnen als einzige Implementierung "mfxhw64" (die Legacy-MediaSDK), die die
+# GPU zwar als DeviceID 7d67 sah, aber MFX_MEDIA_UNKNOWN meldete und bei Encoder-
+# wie Decoder-Faehigkeiten "Version: 0.0" - also gar keine. Genau daher der
+# Abbruch mit "Error setting child device handle: -17". Die brauchbare Runtime
+# kommt ausschliesslich aus Schritt 2.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     mkvtoolnix \
     mediainfo \
     intel-media-va-driver-non-free \
-    libmfx1 \
-    libmfx-gen1.2 \
     libvpl2 \
     va-driver-all \
     vainfo \
@@ -35,20 +40,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Schritt 2 - aktuelle oneVPL/QSV-Laufzeit aus Intels offiziellem Client-Repo.
-# Absichtlich fehlertolerant ("|| true" am Ende): Intels beide Doku-Seiten nennen
-# UNTERSCHIEDLICHE Paketnamen (PPA-Doku "libmfx-gen1.2", Repo-Doku "libmfx-gen1"),
-# deshalb werden beide Varianten nacheinander probiert. Schlaegt der ganze Schritt
-# fehl, bleibt das Image mit der Ubuntu-Runtime funktionsfaehig - VAAPI laeuft
-# weiter, nur die experimentellen QSV-Presets haetten dann keine neue Runtime.
+# Paketname NICHT geraten, sondern per "apt-cache policy" im laufenden Container
+# ermittelt: Ubuntus "libmfx-gen1.2" bietet nur 23.2.3, waehrend Intels Repo das
+# Paket "libmfx-gen1" in 24.3.4-1018~24.04 fuehrt (Alternativname "libmfxgen1"
+# mit 24.2.4 als Rueckfallebene). Wichtig: frueher wurde hier "libmfx-gen1.2"
+# mitinstalliert - das galt als Erfolg, weil es aus Schritt 1 schon da war, und
+# die eigentliche neue Runtime wurde nie geholt.
+#
+# Absichtlich fehlertolerant: schlaegt der Schritt fehl, bleibt das Image ohne
+# QSV-Runtime, aber voll funktionsfaehig - VAAPI ist davon unabhaengig.
 RUN set -eux; \
     ( curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key \
         | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
       && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble client" \
         > /etc/apt/sources.list.d/intel-gpu-noble.list \
       && apt-get update \
-      && ( apt-get install -y --no-install-recommends libmfx-gen1.2 libvpl2 libvpl-tools \
-           || apt-get install -y --no-install-recommends libmfx-gen1 libvpl2 libvpl-tools \
-           || apt-get install -y --no-install-recommends libvpl2 ) \
+      && ( apt-get install -y --no-install-recommends libmfx-gen1 libvpl2 libvpl-tools \
+           || apt-get install -y --no-install-recommends libmfxgen1 libvpl2 libvpl-tools ) \
       && echo "Intel-Repo: oneVPL-Laufzeit aktualisiert" ) \
     || echo "WARNUNG: Intel-Repo nicht nutzbar - bleibe bei Ubuntu-Runtime (VAAPI unbeeintraechtigt)"; \
     rm -rf /var/lib/apt/lists/*
