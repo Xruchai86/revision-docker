@@ -16,13 +16,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # "Error setting child device handle: -17"). Deshalb wird die Medien-Laufzeit
 # aus Intels offiziellem Client-GPU-Repository installiert (Paketliste und
 # Repo-Zeile aus Intels eigener Installationsdoku uebernommen, nicht geraten).
+# Schritt 1 - Basis aus den Ubuntu-Quellen. Bewusst als EIGENER Schritt, damit
+# der Build auch dann durchlaeuft, wenn Intels Repository (Schritt 2) nicht
+# erreichbar ist oder Paketnamen aendert: VAAPI ist der Standard-Pfad und haengt
+# NICHT an Intels Repo. Nur QSV wuerde dann auf der alten Runtime bleiben.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gpg-agent ca-certificates curl \
-    && curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key \
-        | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble client" \
-        > /etc/apt/sources.list.d/intel-gpu-noble.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     mkvtoolnix \
     mediainfo \
@@ -30,11 +28,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmfx1 \
     libmfx-gen1.2 \
     libvpl2 \
-    libvpl-tools \
     va-driver-all \
     vainfo \
     python3 python3-pip \
+    gnupg ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Schritt 2 - aktuelle oneVPL/QSV-Laufzeit aus Intels offiziellem Client-Repo.
+# Absichtlich fehlertolerant ("|| true" am Ende): Intels beide Doku-Seiten nennen
+# UNTERSCHIEDLICHE Paketnamen (PPA-Doku "libmfx-gen1.2", Repo-Doku "libmfx-gen1"),
+# deshalb werden beide Varianten nacheinander probiert. Schlaegt der ganze Schritt
+# fehl, bleibt das Image mit der Ubuntu-Runtime funktionsfaehig - VAAPI laeuft
+# weiter, nur die experimentellen QSV-Presets haetten dann keine neue Runtime.
+RUN set -eux; \
+    ( curl -fsSL https://repositories.intel.com/gpu/intel-graphics.key \
+        | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg \
+      && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble client" \
+        > /etc/apt/sources.list.d/intel-gpu-noble.list \
+      && apt-get update \
+      && ( apt-get install -y --no-install-recommends libmfx-gen1.2 libvpl2 libvpl-tools \
+           || apt-get install -y --no-install-recommends libmfx-gen1 libvpl2 libvpl-tools \
+           || apt-get install -y --no-install-recommends libvpl2 ) \
+      && echo "Intel-Repo: oneVPL-Laufzeit aktualisiert" ) \
+    || echo "WARNUNG: Intel-Repo nicht nutzbar - bleibe bei Ubuntu-Runtime (VAAPI unbeeintraechtigt)"; \
+    rm -rf /var/lib/apt/lists/*
 
 # dovi_tool - offizielles Release-Binary, fest auf eine geprüfte Version gepinnt.
 # Version bewusst direkt in der URL (keine ARG-Variable) - robuster, keine Frage
