@@ -32,13 +32,17 @@ def _worker():
             suffix = "_downsized" if job["job_type"] == "downsize" else "_DV81"
             out_path = os.path.join(job["output_folder"], _out_filename(mi, suffix))
             bitrate = job.get("target_bitrate_mbps")
+            quality = job.get("quality")
             if job["job_type"] == "downsize":
-                core.downsize(mi, out_path, log, profile_key=job["profile"], target_bitrate_mbps=bitrate)
+                core.downsize(mi, out_path, log, profile_key=job["profile"],
+                              target_bitrate_mbps=bitrate, quality=quality)
             else:
-                core.run_fix(mi, out_path, log, profile_key=job["profile"], target_bitrate_mbps=bitrate)
+                core.run_fix(mi, out_path, log, profile_key=job["profile"],
+                             target_bitrate_mbps=bitrate, quality=quality)
                 threshold = float(_settings.get("downsize_threshold_mbps", 35.0))
                 force_reencode = bool(_settings.get("force_reencode_dual_layer", False))
-                core.maybe_chain_downsize(mi, out_path, log, job["profile"], threshold, bitrate, force_reencode)
+                core.maybe_chain_downsize(mi, out_path, log, job["profile"], threshold,
+                                          bitrate, force_reencode, quality)
             job["status"] = "done"
             job["output_path"] = out_path
         except Exception as ex:  # noqa: BLE001 - Job-Fehler sollen den Worker nicht sterben lassen
@@ -59,7 +63,19 @@ threading.Thread(target=_worker, daemon=True).start()
 
 @app.route("/")
 def index():
-    return render_template("index.html", profiles=core.QUALITY_PROFILES, settings=_settings, temp_root=core.TEMP_ROOT)
+    return render_template("index.html", profiles=core.QUALITY_PROFILES,
+                           categories=core.CATEGORIES, settings=_settings,
+                           temp_root=core.TEMP_ROOT)
+
+
+@app.route("/einstellungen")
+def settings_page():
+    """Eigene Seite fuer alles Dauerhafte (Zielordner, Ordner-Zuordnung,
+    Qualitaetswert, Schwellen). Haelt die Hauptseite frei von Feldern, die man
+    einmal einstellt und danach nicht mehr anfasst."""
+    return render_template("settings.html", profiles=core.QUALITY_PROFILES,
+                           categories=core.CATEGORIES, settings=_settings,
+                           temp_root=core.TEMP_ROOT)
 
 
 @app.route("/api/settings", methods=["GET", "POST"])
@@ -73,6 +89,11 @@ def api_settings():
 
 
 MEDIA_ROOT = os.path.normpath(os.environ.get("MEDIA_ROOT", "/media/source"))
+# Zweite Wurzel fuer den Ordner-Browser: der Ausgabeordner. Getrennt gehalten,
+# damit der Browser nie zwischen Quell- und Zielbaum wechseln kann - der
+# Path-Traversal-Schutz prueft immer gegen genau eine feste Wurzel.
+OUTPUT_ROOT = os.path.normpath(os.environ.get("OUTPUT_ROOT", "/media/output"))
+BROWSE_ROOTS = {"source": MEDIA_ROOT, "output": OUTPUT_ROOT}
 
 
 @app.route("/api/browse")
@@ -82,11 +103,16 @@ def api_browse():
     absoluter/externer Pfad - verhindert, dass man aus dem gemounteten
     Medienordner heraus navigieren kann (Path-Traversal-Schutz)."""
     rel_path = request.args.get("path", "").strip("/")
-    target = os.path.normpath(os.path.join(MEDIA_ROOT, rel_path))
+    root_key = request.args.get("root", "source")
+    root = BROWSE_ROOTS.get(root_key)
+    if root is None:
+        return jsonify({"error": "Unbekannte Wurzel."}), 400
 
-    # Sicherstellen, dass target wirklich INNERHALB von MEDIA_ROOT liegt - auch
-    # nach normpath (faengt "../../etc" o.ae. ab).
-    if os.path.commonpath([target, MEDIA_ROOT]) != os.path.normpath(MEDIA_ROOT):
+    target = os.path.normpath(os.path.join(root, rel_path))
+
+    # Sicherstellen, dass target wirklich INNERHALB der gewaehlten Wurzel liegt -
+    # auch nach normpath (faengt "../../etc" o.ae. ab).
+    if os.path.commonpath([target, root]) != root:
         return jsonify({"error": "Ungültiger Pfad."}), 400
     if not os.path.isdir(target):
         return jsonify({"error": "Ordner nicht gefunden."}), 404
@@ -99,10 +125,10 @@ def api_browse():
     except PermissionError:
         return jsonify({"error": "Keine Leserechte für diesen Ordner."}), 403
 
-    clean_rel = os.path.relpath(target, MEDIA_ROOT)
+    clean_rel = os.path.relpath(target, root)
     clean_rel = "" if clean_rel == "." else clean_rel
     return jsonify({
-        "root": MEDIA_ROOT,
+        "root": root,
         "rel_path": clean_rel,
         "full_path": target,
         "folders": entries,
@@ -144,25 +170,73 @@ def api_scan():
                 "action": mi.action,
                 "can_downsize": downsize_ok,
             })
-    return jsonify({"results": results, "downsize_threshold_mbps": threshold})
+    return jsonify({
+        "results": results,
+        "downsize_threshold_mbps": threshold,
+        # Ueber die Ordnerregeln erkannte Kategorie (oder None) - das Frontend
+        # filtert damit die Profilliste, ohne dass manuell umgestellt werden muss.
+        "category": category_for_path(folder),
+    })
+
+
+def _quality_override() -> int | None:
+    """Qualitaetswert aus den Einstellungen - 0/leer bedeutet "Profil-Standard
+    verwenden", nicht "Qualitaet 0" (das waere nahezu verlustfrei und riesig)."""
+    try:
+        q = int(_settings.get("quality_override", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return q if q > 0 else None
+
+
+def category_for_path(path: str) -> str | None:
+    """Ordnet einen Quellpfad ueber die konfigurierten Regeln einer Kategorie zu.
+    Erste Uebereinstimmung gewinnt, Gross-/Kleinschreibung egal - bei strikter
+    Ordnerstruktur muss damit pro Aufgabe nichts mehr manuell umgestellt werden."""
+    low = path.lower()
+    for rule in _settings.get("category_rules") or []:
+        frag = (rule.get("pfad") or "").strip().lower()
+        cat = (rule.get("kategorie") or "").strip()
+        if frag and cat and frag in low:
+            return cat
+    return None
+
+
+def output_folder_for(path: str, fallback: str) -> str:
+    """Waehlt den Ausgabeordner anhand der Kategorie des QUELLpfades. Ohne
+    passende Regel oder ohne konfigurierten Kategorie-Ordner bleibt es beim
+    allgemeinen Zielordner - so bleibt alles wie bisher, solange nichts
+    eingerichtet ist."""
+    cat = category_for_path(path)
+    if cat:
+        per_cat = (_settings.get("output_folders") or {}).get(cat, "")
+        if per_cat and per_cat.strip():
+            return per_cat.strip()
+    return fallback
 
 
 def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: str,
-                 target_bitrate_mbps: float | None = None) -> list[str]:
-    os.makedirs(output_folder, exist_ok=True)
+                 target_bitrate_mbps: float | None = None,
+                 quality: int | None = None) -> list[str]:
     created = []
     for path in paths:
         if path not in _scan_cache:
             continue
+        # Zielordner pro Datei bestimmen - eine Auswahl kann Dateien aus
+        # mehreren Kategorien enthalten, wenn ueber einen Sammelordner gescannt
+        # wurde. Deshalb hier und nicht einmal vorab.
+        target_folder = output_folder_for(path, output_folder)
+        os.makedirs(target_folder, exist_ok=True)
         job_id = str(uuid.uuid4())
         jobs[job_id] = {
             "id": job_id,
             "path": path,
             "filename": _scan_cache[path].filename,
-            "output_folder": output_folder,
+            "output_folder": target_folder,
             "profile": profile,
             "job_type": job_type,
             "target_bitrate_mbps": target_bitrate_mbps,
+            "quality": quality,
             "status": "queued",
             "log": [],
         }
@@ -184,7 +258,8 @@ def api_fix():
         _settings["target_bitrate_mbps"] = float(bitrate)
     settings_store.save(_settings)
 
-    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "fix", bitrate)
+    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"],
+                          "fix", bitrate, _quality_override())
     return jsonify({"job_ids": created})
 
 
@@ -201,7 +276,8 @@ def api_downsize():
         _settings["target_bitrate_mbps"] = float(bitrate)
     settings_store.save(_settings)
 
-    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"], "downsize", bitrate)
+    created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"],
+                          "downsize", bitrate, _quality_override())
     return jsonify({"job_ids": created})
 
 

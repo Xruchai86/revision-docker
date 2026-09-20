@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>ReVision – Einstellungen</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="mark">▶</div>
+    <h1>ReVision</h1>
+    <span class="sub">Einstellungen · Temp: {{ temp_root }}</span>
+  </div>
+  <a class="btn-ghost" href="/">&larr; Zurück</a>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Ausgabeordner</h2>
+    <div class="field">
+      <label>Allgemeiner Zielordner – wird verwendet, wenn unten nichts Eigenes gesetzt ist</label>
+      <div class="path-picker">
+        <input type="text" id="outputFolder" value="{{ settings.output_folder }}" placeholder="/media/output">
+        <button class="btn-ghost" onclick="openOutputBrowser(null)">Durchsuchen…</button>
+      </div>
+    </div>
+
+    <p class="hint">
+      Je Kategorie ein eigener Zielordner – damit landen Filme, Serien und Anime automatisch
+      getrennt, ohne dass pro Aufgabe etwas umgestellt werden muss. Welche Kategorie eine Datei
+      hat, ergibt sich aus der Ordner-Zuordnung weiter unten. Leer lassen heißt: allgemeiner
+      Zielordner.
+    </p>
+    <table id="outputTable">
+      <thead><tr><th style="width:170px">Kategorie</th><th>Zielordner</th></tr></thead>
+      <tbody>
+        {% for key, label in categories.items() %}
+        <tr>
+          <td>{{ label }}</td>
+          <td>
+            <div class="path-picker">
+              <input type="text" class="cat-output" data-category="{{ key }}"
+                     value="{{ settings.output_folders.get(key, '') }}"
+                     placeholder="(allgemeiner Zielordner)">
+              <button class="btn-ghost" onclick="openOutputBrowser('{{ key }}')">Durchsuchen…</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Ordner-Zuordnung</h2>
+    <p class="hint">
+      Bei fester Ordnerstruktur muss nichts mehr pro Aufgabe umgestellt werden: Enthält der
+      Quellpfad eines der Fragmente, wird beim Scannen automatisch die passende Kategorie
+      gewählt und die Profilliste darauf gefiltert. Groß-/Kleinschreibung ist egal, und es
+      genügt ein Teilstück des Pfades – „Anime“ reicht, der volle Pfad ist nicht nötig.
+      <br><br>
+      <strong>Die Reihenfolge zählt:</strong> geprüft wird von oben nach unten, die erste
+      Übereinstimmung gewinnt. Bei sich überlappenden Fragmenten (etwa „Serien“ und
+      „Serien-Anime“) muss das speziellere nach oben, sonst greift es nie.
+    </p>
+    <table id="rulesTable">
+      <thead><tr><th>Pfad enthält</th><th style="width:200px">Kategorie</th><th style="width:120px">Reihenfolge</th></tr></thead>
+      <tbody id="rulesBody"></tbody>
+    </table>
+    <button class="btn-ghost" onclick="addRule()">+ Regel hinzufügen</button>
+  </section>
+
+  <section class="card">
+    <h2>Qualität</h2>
+    <div class="field">
+      <label>
+        Qualitätswert – <strong>niedriger = mehr Details und größere Dateien</strong>
+        (0 = Wert des gewählten Profils verwenden)
+      </label>
+      <div class="path-picker">
+        <input type="range" id="qualityOverride" min="0" max="30" step="1"
+               value="{{ settings.quality_override }}">
+        <span class="slider-value" id="qualityValue">{{ settings.quality_override }}</span>
+      </div>
+      <p class="hint">
+        Bei den QVBR- und ICQ-Profilen ist <em>dies</em> der eigentliche Steuerwert – die
+        Ziel-Bitrate wirkt dort nur als Obergrenze. Deshalb können Ergebnisse deutlich unter
+        dem Bitraten-Regler landen. Richtwerte: 17–19 sehr hochwertig, 20–23 guter
+        Kompromiss, 24 und höher sichtbar sparsamer.
+      </p>
+    </div>
+    <div class="field" style="max-width:260px">
+      <label>Downsize-Schwelle (Mbit/s)</label>
+      <input type="number" id="downsizeThreshold" value="{{ settings.downsize_threshold_mbps }}">
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Verarbeitung</h2>
+    <label class="checkline">
+      <input type="checkbox" id="forceReencodeCheck"
+             {% if settings.force_reencode_dual_layer %}checked{% endif %}>
+      Profile 7/Dual-Layer immer neu encodieren (statt nur EL zu verwerfen) – kann
+      Abspielprobleme bei manchen Playern beheben, kostet aber GPU-Zeit statt des sonst
+      verlustfreien, schnellen Fixes
+    </label>
+  </section>
+
+  <div id="saveStatus" class="status-line"></div>
+</main>
+
+<!-- Ordner-Browser: derselbe /api/browse-Endpunkt wie auf der Hauptseite, damit
+     Regelpfade ausgewählt statt abgetippt werden (Tippfehler = Regel greift nie). -->
+<div id="browseModal" class="modal" style="display:none">
+  <div class="modal-content">
+    <h2 style="margin-top:0" id="browseTitle">Ordner wählen</h2>
+    <div id="browseBreadcrumb" class="breadcrumb"></div>
+    <div id="browseList" class="browse-list"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeBrowser()">Abbrechen</button>
+      <button class="btn-gold" onclick="chooseCurrentFolder()">Diesen Ordner übernehmen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.CATEGORIES = {
+    {% for key, label in categories.items() %}"{{ key }}": "{{ label }}"{{ "," if not loop.last }}{% endfor %}
+  };
+  window.SAVED_RULES = {{ settings.category_rules | tojson }};
+</script>
+<script src="{{ url_for('static', filename='settings.js') }}"></script>
+</body>
+</html>

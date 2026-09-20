@@ -22,7 +22,7 @@ WICHTIG: Für Hardware-Beschleunigung muss die Intel-iGPU per /dev/dri an den Co
 
   <Config Name="Quellordner (kompletter Medien-Root)" Target="/media/source" Default="/mnt/user/Media" Mode="rw" Description="Kompletten Medien-Ordner einbinden (nicht nur einen einzelnen Unterordner) - innerhalb der App gibt's einen Ordner-Browser zum Navigieren/Auswählen, welcher Unterordner tatsächlich gescannt wird." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Media</Config>
 
-  <Config Name="Zielordner" Target="/media/output" Default="/mnt/user/Filme_Fertig" Mode="rw" Description="Zielordner für die gefixten Dateien (im Container: /media/output)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme_Fertig</Config>
+  <Config Name="Zielordner" Target="/media/output" Default="/mnt/user/Filme_Fertig" Mode="rw" Description="Zielordner für die gefixten Dateien (im Container: /media/output). Am besten einen übergeordneten Ordner wählen - in den Einstellungen der App lässt sich je Kategorie (Filme/Serien/Anime) ein eigener Unterordner darin auswählen." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Filme_Fertig</Config>
 
   <Config Name="Temp-Ordner" Target="/media/temp" Default="/mnt/user/Convert_Temp" Mode="rw" Description="Zwischendateien (MP4-Remux, RPU-Extraktion, Reencode-Zwischenschritte) - braucht bei 4K-Dateien schnell mehrere zig GB. UNBEDINGT auf einen Pfad mit viel freiem Speicher zeigen lassen (Array, nicht Cache/appdata) - sonst 'No space left on device' mitten im Job." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/Convert_Temp</Config>
 

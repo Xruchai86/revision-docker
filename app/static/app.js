@@ -3,7 +3,7 @@ let browseCurrentPath = "";
 const ACTION_LABELS = {
   dual_layer: "Dual-Layer-Fix (verlustfrei)",
   relabel: "Relabel → 8.1 (verlustfrei)",
-  reencode: "Reencode-Fix (VAAPI)",
+  reencode: "Reencode-Fix",  // Encoder haengt am gewaehlten Preset, nicht fest verdrahtet
 };
 
 // Persistiert Zielordner/Profil/Schwelle serverseitig (settings.json), sobald
@@ -16,26 +16,58 @@ async function saveSettingsField(patch) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("outputFolder").addEventListener("change", e =>
-    saveSettingsField({ output_folder: e.target.value }));
+  // Zielordner, Downsize-Schwelle, Qualitaetswert und die Reencode-Option leben
+  // jetzt auf /einstellungen - hier bleiben nur die Felder, die sich pro
+  // Aufgabe aendern.
+  applyCategoryFilter(window.SAVED_CATEGORY || "");
+
+  document.getElementById("categorySelect").addEventListener("change", e =>
+    applyCategoryFilter(e.target.value));
+
   document.getElementById("profileSelect").addEventListener("change", e => {
     saveSettingsField({ quality_profile: e.target.value });
-    // Profilwechsel setzt den Regler auf den Profil-Standardwert zurueck -
-    // der Nutzer kann danach weiterhin selbst nachjustieren.
     const defaultMbps = window.PROFILE_TARGET_MBPS[e.target.value];
     if (defaultMbps) {
-      document.getElementById("targetBitrateSlider").value = defaultMbps;
+      const slider = document.getElementById("targetBitrateSlider");
+      slider.value = defaultMbps;
       document.getElementById("targetBitrateValue").textContent = defaultMbps;
       saveSettingsField({ target_bitrate_mbps: defaultMbps });
     }
   });
+
   document.getElementById("targetBitrateSlider").addEventListener("change", e =>
     saveSettingsField({ target_bitrate_mbps: parseFloat(e.target.value) }));
-  document.getElementById("downsizeThreshold").addEventListener("change", e =>
-    saveSettingsField({ downsize_threshold_mbps: parseFloat(e.target.value) || 35.0 }));
-  document.getElementById("forceReencodeCheck").addEventListener("change", e =>
-    saveSettingsField({ force_reencode_dual_layer: e.target.checked }));
 });
+
+// Zeigt nur die Profile der gewaehlten Kategorie. Leere Auswahl = alle.
+// Faellt das aktuell gewaehlte Profil aus der Liste, wird automatisch das
+// erste passende genommen, damit nie ein unsichtbares Profil aktiv bleibt.
+function applyCategoryFilter(category) {
+  const sel = document.getElementById("profileSelect");
+  const catSel = document.getElementById("categorySelect");
+  if (catSel.value !== category) catSel.value = category;
+
+  let firstVisible = null;
+  let currentStillVisible = false;
+  for (const opt of sel.options) {
+    const cats = window.PROFILE_CATEGORIES[opt.value] || [];
+    const visible = !category || cats.includes(category);
+    opt.hidden = !visible;
+    if (visible) {
+      if (!firstVisible) firstVisible = opt.value;
+      if (opt.value === sel.value) currentStillVisible = true;
+    }
+  }
+  if (!currentStillVisible && firstVisible) {
+    sel.value = firstVisible;
+    saveSettingsField({ quality_profile: firstVisible });
+    const defaultMbps = window.PROFILE_TARGET_MBPS[firstVisible];
+    if (defaultMbps) {
+      document.getElementById("targetBitrateSlider").value = defaultMbps;
+      document.getElementById("targetBitrateValue").textContent = defaultMbps;
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Ordner-Browser-Popup - navigiert innerhalb des gemounteten Medien-Roots,
@@ -102,7 +134,6 @@ async function scan() {
 
   // Aktuelle Schwelle vor dem Scan speichern, damit der Server sie fuer die
   // can_downsize-Einordnung verwendet.
-  await saveSettingsField({ downsize_threshold_mbps: parseFloat(document.getElementById("downsizeThreshold").value) || 35.0 });
 
   statusEl.textContent = "Scanne…";
   const res = await fetch("/api/scan", {
@@ -113,7 +144,17 @@ async function scan() {
   if (data.error) { statusEl.textContent = data.error; return; }
 
   lastResults = data.results;
-  statusEl.textContent = `${data.results.length} Datei(en) gefunden (Downsize-Schwelle: ${data.downsize_threshold_mbps} Mbit/s).`;
+
+  // Kategorie aus den Ordnerregeln uebernehmen, falls der Pfad zu einer passt.
+  let catNote = "";
+  if (data.category && window.PROFILE_CATEGORIES) {
+    applyCategoryFilter(data.category);
+    const label = document.getElementById("categorySelect").selectedOptions[0];
+    catNote = ` · Kategorie automatisch: ${label ? label.textContent : data.category}`;
+  }
+
+  statusEl.textContent =
+    `${data.results.length} Datei(en) gefunden (Downsize-Schwelle: ${data.downsize_threshold_mbps} Mbit/s)${catNote}.`;
 
   if (data.results.length === 0) return;
 
@@ -147,12 +188,23 @@ function toggleAll(cb) {
 
 async function processSelected() {
   const checked = Array.from(document.querySelectorAll(".rowcheck:checked"));
-  const outputFolder = document.getElementById("outputFolder").value.trim();
+  // Zielordner liegt jetzt in den Einstellungen, nicht mehr im Formular.
+  let outputFolder = "";
+  try {
+    const cfg = await (await fetch("/api/settings")).json();
+    outputFolder = (cfg.output_folder || "").trim();
+  } catch (err) {
+    alert("Einstellungen nicht lesbar: " + err.message);
+    return;
+  }
   const profile = document.getElementById("profileSelect").value;
   const target_bitrate_mbps = parseFloat(document.getElementById("targetBitrateSlider").value);
 
   if (checked.length === 0) { alert("Keine Datei angehakt."); return; }
-  if (!outputFolder) { alert("Bitte einen Zielordner angeben."); return; }
+  if (!outputFolder) {
+    alert("Kein Zielordner gesetzt – bitte unter „Einstellungen“ eintragen.");
+    return;
+  }
 
   const fixPaths = checked.filter(el => el.dataset.mode === "fix").map(el => el.dataset.path);
   const downsizePaths = checked.filter(el => el.dataset.mode === "downsize").map(el => el.dataset.path);
@@ -193,15 +245,44 @@ async function pollJobs() {
   setTimeout(pollJobs, 2000);
 }
 
+// Live-Log: solange der Dialog offen ist, wird der Inhalt regelmaessig
+// nachgeladen. Frueher zeigte der Dialog nur den Stand zum Zeitpunkt des
+// Oeffnens - bei laufenden Jobs also einen eingefrorenen Ausschnitt.
+let logTimer = null;
+let logJobId = null;
+
+async function refreshLog() {
+  if (!logJobId) return;
+  try {
+    const res = await fetch(`/api/jobs/${logJobId}/log`);
+    const data = await res.json();
+    const el = document.getElementById("logContent");
+
+    // Nur ans Ende springen, wenn der Nutzer ohnehin schon unten war -
+    // sonst reisst es ihn beim Lesen staendig nach unten.
+    const box = el.parentElement;
+    const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+
+    el.textContent = data.log || "(noch kein Log)";
+    if (wasAtBottom) box.scrollTop = box.scrollHeight;
+  } catch (err) {
+    // Netzwerkaussetzer nicht als Fehler anzeigen - naechster Durchlauf holt es nach.
+  }
+}
+
 async function showLog(jobId) {
-  const res = await fetch(`/api/jobs/${jobId}/log`);
-  const data = await res.json();
-  document.getElementById("logContent").textContent = data.log || "(noch kein Log)";
+  logJobId = jobId;
   document.getElementById("logModal").style.display = "flex";
+  await refreshLog();
+  document.getElementById("logContent").parentElement.scrollTop = 1e9;
+  if (logTimer) clearInterval(logTimer);
+  logTimer = setInterval(refreshLog, 2000);
 }
 
 function closeLog() {
   document.getElementById("logModal").style.display = "none";
+  if (logTimer) { clearInterval(logTimer); logTimer = null; }
+  logJobId = null;
 }
 
 pollJobs();

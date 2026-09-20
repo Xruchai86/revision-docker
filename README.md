@@ -110,6 +110,60 @@ mehr bit-identisch zum Original, kann aber genau dieses Abspielproblem umgehen.
 **Nur aktivieren, wenn du tatsächlich Kompatibilitätsprobleme hast** - der
 Standard-Fix bleibt der schnellere, verlustfreie Weg.
 
+## RPU-Extraktion per Pipe statt Riesen-Zwischendatei (neu)
+
+Beim Reencode-Fix (Profile 5) und beim Downsize von Profile-8-Quellen wurde die
+rohe HEVC-Spur bisher erst **komplett als Datei** in den Temp-Ordner geschrieben
+(bei 4K-Material rund 15 GB) und danach von `dovi_tool` wieder eingelesen – ein
+vollständiger Schreib- **und** Lesedurchgang über die Platte, nur um an wenige
+Megabyte RPU-Daten zu kommen. Der Dual-Layer-Fix nutzte an derselben Stelle
+längst eine Pipe; hier war es historisch anders gewachsen und nie angeglichen
+worden.
+
+Jetzt läuft `ffmpeg` direkt per Pipe in `dovi_tool extract-rpu`. Das spart pro
+Job die Zwischendatei und die zugehörige I/O-Zeit – besonders relevant bei
+RAM-basiertem Temp (tmpfs), wo die Datei echten Arbeitsspeicher belegt hat.
+
+**Detail beim Fehler-Handling:** Beendet sich `dovi_tool` früher als `ffmpeg`,
+bekommt ffmpeg ein SIGPIPE und endet mit Rückgabewert -13. Das ist **kein**
+Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließlich
+der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
+gewertet, echter Fehlschlag → wird weiterhin erkannt.
+
+## Kategorien, eigene Einstellungsseite und Live-Log (neu)
+
+**Eigene Einstellungsseite** unter `/einstellungen` (Link oben rechts). Dorthin
+sind alle Werte gewandert, die man einmal setzt und danach nicht mehr anfasst –
+Zielordner, Downsize-Schwelle, Qualitätswert und die Dual-Layer-Option. Die
+Hauptseite zeigt nur noch, was sich pro Aufgabe ändert: Quellordner, Kategorie,
+Profil, Ziel-Bitrate.
+
+**Ordner-Zuordnung:** Regeln der Form „Pfad enthält X → Kategorie Y“. Beim
+Scannen wird der Quellpfad dagegen geprüft, die passende Kategorie automatisch
+gewählt und die Profilliste darauf gefiltert. Bei fester Ordnerstruktur muss
+damit pro Aufgabe nichts mehr manuell umgestellt werden.
+
+**Kategorien und Anime-Presets:** Realfilm, Serie, Anime-Film, Anime-Serie.
+Anime hat große einfarbige Flächen, harte Kanten und kein Filmkorn – das
+komprimiert deutlich besser, gleichzeitig fallen Blockartefakte in
+Farbverläufen stärker auf. Die Anime-Presets kombinieren deshalb eine
+**niedrigere Bitrate mit einem besseren Qualitätswert** statt einfach nur die
+Bitrate zu senken (Anime-Film 18 Mbit/s bei Qualität 19 gegenüber Realfilm
+30 Mbit/s bei 22).
+
+**Qualitätswert einstellbar (wichtig):** Bei QVBR und ICQ ist *dieser* Wert der
+eigentliche Steuerhebel – die Ziel-Bitrate wirkt dort nur als **Obergrenze**.
+Deshalb können Ergebnisse deutlich darunter landen: eine GoT-Folge mit
+eingestellten 30 Mbit/s kam bei Qualität 22 tatsächlich bei rund 12–13 Mbit/s
+heraus (66 % kleiner als das Original, ohne sichtbaren Verlust). Wer die
+Bitrate ausreizen will, senkt den Qualitätswert. Richtwerte: 17–19 sehr
+hochwertig, 20–23 guter Kompromiss, ab 24 sichtbar sparsamer. `0` bedeutet
+„Wert des Profils verwenden“.
+
+**Live-Log:** Der Log-Dialog lädt jetzt alle zwei Sekunden nach, statt den Stand
+beim Öffnen einzufrieren. Er springt nur dann ans Ende, wenn man ohnehin unten
+war – beim Zurückscrollen bleibt die Position erhalten.
+
 ## Qualitäts-Presets mit Rate-Control-Modi (neu)
 
 Statt nur einer Ziel-Bitrate gibt es jetzt sechs Presets, die Rate-Control-Modus,

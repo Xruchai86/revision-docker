@@ -16,10 +16,29 @@ SETTINGS_PATH = os.environ.get("SETTINGS_PATH", "/config/settings.json")
 
 DEFAULTS = {
     "output_folder": "",
-    "quality_profile": "qvbr_film",  # QVBR: Qualitätsziel mit Bitraten-Deckel
+    "quality_profile": "qsv_film",
     "downsize_threshold_mbps": 35.0,
     "target_bitrate_mbps": 30.0,  # 0/leer = Profil-Standardwert verwenden
     "force_reencode_dual_layer": False,  # Profile 7/Dual-Layer immer neu encodieren statt nur EL zu verwerfen
+
+    # Qualitaetswert (global_quality/-qp). NIEDRIGER = mehr Bits, mehr Details.
+    # 0 = Profil-Standard verwenden. Bei QVBR/ICQ ist DAS der eigentliche
+    # Steuerwert - die Ziel-Bitrate wirkt dort nur als Obergrenze, weshalb
+    # Ergebnisse deutlich unter dem Bitraten-Regler landen koennen.
+    "quality_override": 0,
+
+    # Ausgabeordner je Kategorie: {"film": "/media/output/Filme", ...}.
+    # Leer oder fehlend = der allgemeine output_folder wird verwendet. Damit
+    # landen Serien, Filme und Anime automatisch in getrennten Zielordnern,
+    # ohne dass pro Aufgabe etwas umgestellt werden muss.
+    "output_folders": {},
+
+    # Ordner-Zuordnung: Liste von {"pfad": "...", "kategorie": "..."}.
+    # Beim Scannen wird der Quellpfad gegen diese Fragmente geprueft (erste
+    # Uebereinstimmung gewinnt) und die passende Kategorie vorausgewaehlt, die
+    # wiederum die Profilliste filtert. Damit muss bei strikter Ordnerstruktur
+    # nichts mehr pro Aufgabe manuell umgestellt werden.
+    "category_rules": [],
 }
 
 
