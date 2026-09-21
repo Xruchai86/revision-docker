@@ -1,4 +1,7 @@
 let lastResults = [];
+// Job-Arten fuer die Warteschlange. Frueher stand hier "downsize ? Downsize : Fix" -
+// dadurch erschien auch die Kalibrierung als "Fix".
+const JOB_TYPE_LABELS = { fix: "Fix", downsize: "Downsize", calibrate: "Kalibrierung" };
 let browseCurrentPath = "";
 const ACTION_LABELS = {
   dual_layer: "Dual-Layer-Fix (verlustfrei)",
@@ -257,7 +260,7 @@ async function pollJobs() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${job.filename}</td>
-      <td>${job.job_type === "downsize" ? "Downsize" : "Fix"}</td>
+      <td>${JOB_TYPE_LABELS[job.job_type] || job.job_type}</td>
       <td class="status-${job.status}">${job.status}${job.error ? " – " + job.error : ""}</td>
       <td><button class="btn-ghost" onclick="showLog('${job.id}')">Log</button></td>
     `;

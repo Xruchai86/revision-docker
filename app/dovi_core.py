@@ -917,6 +917,14 @@ def measure_vmaf(reference: str, distorted: str, log, height: int = 2160,
                     log("CAMBI nicht verfuegbar - messe ohne Banding-Metrik weiter.")
                     return None
                 raise RuntimeError(f"VMAF-Messung fehlgeschlagen: {proc.stderr.strip()[:400]}")
+            # ffmpeg kann mit Rueckgabewert 0 enden, OHNE dass libvmaf ein
+            # Ergebnis schreibt - etwa wenn einer der Eingaenge keine Frames
+            # liefert. Dann klar melden statt "No such file or directory".
+            if not os.path.exists(log_path) or os.path.getsize(log_path) == 0:
+                raise RuntimeError(
+                    "VMAF lieferte kein Ergebnis - vermutlich bekam einer der "
+                    "Eingaenge keine Frames (Zeitbereich ausserhalb der Datei?). "
+                    f"ffmpeg meldete: {proc.stderr.strip()[:300] or 'nichts'}")
             with open(log_path, "r", encoding="utf-8") as f:
                 return json.load(f)
 
@@ -988,8 +996,13 @@ def calibrate_quality(src: str, profile_key: str, quality_values: list[int], log
                 _run(cmd, log)
                 total_bytes += os.path.getsize(out)
 
-                m = measure_vmaf(out, src, log, height=mi.height,
-                                 ref_start=start, ref_duration=seg_len)
+                # Schluesselwort-Argumente mit Absicht: Positional waren hier
+                # Referenz und Encode vertauscht - der Zeitsprung landete dann
+                # auf dem 40-Sekunden-Ausschnitt statt auf dem Original, und
+                # libvmaf bekam keine Frames.
+                m = measure_vmaf(reference=src, distorted=out, log=log,
+                                 height=mi.height, ref_start=start,
+                                 ref_duration=seg_len)
                 all_frames.extend(m["frames"])
                 if m["cambi"] is not None:
                     cambis.append(m["cambi"])
