@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vainfo \
     python3 python3-pip \
     gnupg ca-certificates curl \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Schritt 2 - aktuelle oneVPL/QSV-Laufzeit aus Intels offiziellem Client-Repo.
@@ -81,6 +82,9 @@ RUN curl -fkL "https://github.com/quietvoid/dovi_tool/releases/download/2.3.3/do
 # berechnet, NICHT den VMAF-Wert. Ein eigenstaendiges vmaf-Tool gibt es in den
 # Paketquellen ebenfalls nicht (beides im laufenden Container geprueft).
 #
+# xz-utils wird in Schritt 1 installiert: das Archiv ist .tar.xz, und ohne das
+# xz-Programm scheitert "tar -xJ" - das fiel im ersten Anlauf still durch.
+#
 # Der Build von BtbN/FFmpeg-Builds enthaelt laut dessen eigener
 # Konfigurationszeile "--enable-libvmaf". Die "latest"-URL ist laut deren
 # README bewusst stabil ("provides consistent URLs always pointing to the
@@ -100,7 +104,8 @@ RUN set -eux; \
       && rm -rf /tmp/ffmpeg-vmaf.tar.xz /tmp/ffvmaf \
       && /usr/local/bin/ffmpeg-vmaf -hide_banner -filters 2>/dev/null | grep -q " libvmaf" \
       && echo "VMAF: Mess-ffmpeg installiert, libvmaf-Filter vorhanden" ) \
-    || echo "WARNUNG: VMAF-ffmpeg nicht verfuegbar - Kalibrierung bleibt deaktiviert, Encoden unbeeintraechtigt"
+    || { echo "WARNUNG: VMAF-ffmpeg nicht verfuegbar - Kalibrierung bleibt deaktiviert, Encoden unbeeintraechtigt"; \
+         echo "Diagnose: xz=$(command -v xz || echo FEHLT), Archiv=$(ls -la /tmp/ffmpeg-vmaf.tar.xz 2>/dev/null || echo FEHLT)"; }
 
 WORKDIR /app
 COPY app/requirements.txt .
