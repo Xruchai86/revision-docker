@@ -185,6 +185,31 @@ Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließli
 der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
 gewertet, echter Fehlschlag → wird weiterhin erkannt.
 
+## Kalibrierung: Ausschnittanfang, Tiefstwerte und manuelle Übernahme (Fix)
+
+Die zweite echte Messung war beim **Durchschnitt** plausibel (93,86 → 90,98 fällt
+sauber mit der Bitrate), bei den **schwächsten 5 %** aber nicht: 75,33 → 74,78
+über einen Bitratenbereich von Faktor 4 – diese Frames reagierten also gar nicht
+auf die Qualität. Da die Stufenregel diese 5 % prüft, fiel jeder Wert durch.
+
+**Wahrscheinliche Ursache:** Ein verlustfrei geschnittener Ausschnitt beginnt an
+einem Schlüsselbild, und bei HEVC hängen die direkt folgenden Bilder oft von
+Vorgängern ab, die im Ausschnitt fehlen. Hardware-Decoder (beim Encode) und
+Software-Decoder (beim Messen) gehen damit unterschiedlich um. Deshalb werden
+die ersten 2 Sekunden jedes Ausschnitts jetzt bei **beiden** Eingängen identisch
+aus der Messung genommen – die Synchronität bleibt dabei erhalten.
+
+**Absicherung:** Reagieren die schwächsten 5 % trotzdem nicht auf die Bitrate
+(Faktor ≥ 2 bei weniger als 1,5 Punkten Unterschied), werden sie als Kriterium
+ignoriert und die Stufen nur nach dem Durchschnitt gewählt – mit sichtbarem
+Hinweis, statt jeden Wert stumm durchfallen zu lassen. Mit den echten Werten
+ergab das: sparsam → 23, empfohlen → 19; für „max“ erreichte kein Wert 95, die
+Stufe bleibt ehrlich leer.
+
+**Manuelle Übernahme:** Jede Zeile der Ergebnistabelle hat eine eigene Auswahl
+„Selbst übernehmen als sparsam/empfohlen/max“. Eine Einzelübernahme **ergänzt**
+die übrigen Stufen der Kategorie, statt sie zu überschreiben.
+
 ## Kalibrierung: Frame-Synchronität und Plausibilitätsprüfung (Fix)
 
 Eine echte Messung an GoT S07E01 lieferte **unbrauchbare Werte**:

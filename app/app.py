@@ -42,9 +42,19 @@ def _worker():
                 # wuerden aus einem Messfehler dauerhaft gespeicherte Werte.
                 warning = core.calibration_plausibility(rows)
                 job["calibration_warning"] = warning
-                job["tiers"] = {} if warning else core.tiers_from_calibration(rows)
+                # Reagieren die schwaechsten 5 % nicht auf die Bitrate, sind sie
+                # als Kriterium unbrauchbar - dann nur nach Durchschnitt waehlen
+                # und das offen sagen, statt jeden Wert durchfallen zu lassen.
+                p5_ok = core.calibration_p5_reliable(rows)
+                job["calibration_note"] = None if p5_ok else (
+                    "Die Werte der schwächsten 5 % reagieren kaum auf die Bitrate und "
+                    "messen daher vermutlich keinen Encode-Verlust. Die Stufen wurden "
+                    "deshalb nur nach dem Durchschnitt gewählt.")
+                job["tiers"] = {} if warning else core.tiers_from_calibration(rows, use_p5=p5_ok)
                 if warning:
                     log("WARNUNG: " + warning)
+                if not p5_ok:
+                    log("HINWEIS: " + job["calibration_note"])
                 for t, e in job["tiers"].items():
                     log(f"Stufe {t}: Qualität {e['quality']} (VMAF {e['vmaf']}), "
                         f"Deckel {e['target_mbps']} Mbit/s")
@@ -430,6 +440,13 @@ def api_calibrate_apply():
         }
 
     by_cat = dict(_settings.get("quality_by_category") or {})
+    # merge=True: nur die uebergebenen Stufen setzen, die anderen behalten.
+    # Noetig fuer die Einzelauswahl pro Tabellenzeile - sonst wuerde das
+    # Uebernehmen EINER Stufe die beiden anderen stillschweigend loeschen.
+    if data.get("merge"):
+        merged = dict(by_cat.get(cat) or {})
+        merged.update(entry)
+        entry = merged
     by_cat[cat] = entry
     _settings["quality_by_category"] = by_cat
     settings_store.save(_settings)

@@ -868,7 +868,7 @@ def _percentile(values: list[float], pct: float) -> float:
 
 def measure_vmaf(reference: str, distorted: str, log, height: int = 2160,
                  ref_start: float = 0.0, ref_duration: float | None = None,
-                 subsample: int = 3) -> dict:
+                 subsample: int = 3, skip_head: float = 2.0) -> dict:
     """Misst einen encodierten Ausschnitt gegen das Original.
 
     Liefert nicht nur den Mittelwert: Der Durchschnitt versteckt kurze, starke
@@ -904,8 +904,16 @@ def measure_vmaf(reference: str, distorted: str, log, height: int = 2160,
                    "-i", distorted,
                    *ref_args, "-i", reference,
                    "-lavfi",
-                   f"[0:v]setpts=PTS-STARTPTS[dist];"
-                   f"[1:v]setpts=PTS-STARTPTS[ref];"
+                   # Die ersten Sekunden beider Eingaenge verwerfen - IDENTISCH,
+                   # damit die Synchronitaet erhalten bleibt. Ein verlustfrei
+                   # geschnittener Ausschnitt beginnt an einem Schluesselbild;
+                   # bei HEVC haengen die direkt folgenden Bilder oft von
+                   # Vorgaengern ab, die im Ausschnitt fehlen. Hardware- und
+                   # Software-Decoder gehen damit unterschiedlich um. Beobachtet:
+                   # die schwaechsten 5 % lagen bei ALLEN Qualitaetswerten bei
+                   # ~75, reagierten also gar nicht auf die Bitrate.
+                   f"[0:v]setpts=PTS-STARTPTS,trim=start={skip_head},setpts=PTS-STARTPTS[dist];"
+                   f"[1:v]setpts=PTS-STARTPTS,trim=start={skip_head},setpts=PTS-STARTPTS[ref];"
                    f"[dist][ref]libvmaf=model=version={model}{feats}:"
                    f"n_subsample={subsample}:"
                    f"log_fmt=json:log_path={log_path}:n_threads=4",
@@ -1076,6 +1084,19 @@ def calibration_plausibility(results: list[dict]) -> str | None:
     return None
 
 
+def calibration_p5_reliable(results: list[dict]) -> bool:
+    """Prueft, ob die Werte der schwaechsten 5 % ueberhaupt auf die Qualitaet
+    reagieren. Schwankt die Bitrate um mindestens Faktor 2, die schwaechsten
+    Frames aber um weniger als 1,5 Punkte, messen diese Frames nicht den
+    Encode-Verlust (sondern z.B. Dekodierartefakte am Ausschnittanfang) - dann
+    waeren sie als Kriterium schaedlich, weil jeder Wert daran scheitert."""
+    p5 = [r.get("vmaf_p5") for r in results if r.get("vmaf_p5") is not None]
+    br = [r["bitrate_mbps"] for r in results if r["bitrate_mbps"] > 0]
+    if len(p5) < 2 or not br or min(br) <= 0:
+        return True
+    return not (max(br) / min(br) >= 2.0 and (max(p5) - min(p5)) < 1.5)
+
+
 # Wie weit die schlechtesten 5 % der Frames hoechstens unter dem Ziel liegen
 # duerfen. 6 VMAF-Punkte sind Netflix' "gerade wahrnehmbarer Unterschied"
 # (JND) - ab da bemerkt mehr als die Haelfte der Zuschauer eine Aenderung.
@@ -1084,7 +1105,7 @@ def calibration_plausibility(results: list[dict]) -> str | None:
 P5_MAX_DROP = 6.0
 
 
-def tiers_from_calibration(results: list[dict]) -> dict:
+def tiers_from_calibration(results: list[dict], use_p5: bool = True) -> dict:
     """Ordnet den Messreihen die drei Stufen zu.
 
     Pro Stufe wird der SPARSAMSTE Wert gesucht, der BEIDES erfuellt:
@@ -1109,7 +1130,7 @@ def tiers_from_calibration(results: list[dict]) -> dict:
         passing = [
             r for r in results
             if r["vmaf"] >= target
-            and r.get("vmaf_p5", r["vmaf"]) >= target - P5_MAX_DROP
+            and (not use_p5 or r.get("vmaf_p5", r["vmaf"]) >= target - P5_MAX_DROP)
         ]
         if not passing:
             continue

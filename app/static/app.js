@@ -394,6 +394,28 @@ async function pollCalibration() {
       : `${r.cambi}${r.cambi_max ? ` <span class="status-line">(Spitze ${r.cambi_max})</span>` : ""}`;
     tr.innerHTML = `<td>${r.quality}</td><td>${r.vmaf}</td><td>${p5}</td><td>${band}</td>` +
       `<td>${r.bitrate_mbps} Mbit/s</td><td>${r.estimated_gb} GB</td><td>${mark}</td>`;
+
+    // Manuelle Auswahl je Zeile: Du entscheidest, welcher Messwert für welche
+    // Stufe gilt - unabhängig von der automatischen Empfehlung.
+    const tdPick = document.createElement("td");
+    if (cat && !job.calibration_warning) {
+      const wrap = document.createElement("div");
+      wrap.className = "row-actions";
+      const sel = document.createElement("select");
+      for (const t of ["sparsam", "empfohlen", "max"]) {
+        const o = document.createElement("option");
+        o.value = t; o.textContent = t;
+        if (t === (tierName || "empfohlen")) o.selected = true;
+        sel.appendChild(o);
+      }
+      const btn = document.createElement("button");
+      btn.className = "btn-ghost";
+      btn.textContent = "Übernehmen";
+      btn.onclick = () => applySingleRow(cat, catLabel, sel.value, r, job.filename);
+      wrap.append(sel, btn);
+      tdPick.appendChild(wrap);
+    }
+    tr.appendChild(tdPick);
     body.appendChild(tr);
   }
 
@@ -405,12 +427,15 @@ async function pollCalibration() {
   } else if (!cat) {
     st.textContent = "Fertig. Zum Übernehmen oben eine Kategorie wählen und dieses Ergebnis " +
       "über „Ergebnis“ in der Warteschlange erneut öffnen – neu messen ist nicht nötig.";
-  } else if (tierCount === 0) {
+  } else if (tierCount === 0 && !job.calibration_note) {
     st.textContent = "Fertig – aber kein gemessener Wert erreicht die sparsame Stufe " +
       "(Ø 90 bei höchstens 6 Punkten Einbruch). Bitte mit niedrigeren Qualitätswerten erneut messen.";
   } else {
-    st.innerHTML = `Fertig – ${tierCount} von 3 Stufen belegt. ` +
-      `Übernehmen setzt sie gemeinsam für „${catLabel}“.`;
+    st.innerHTML = (job.calibration_note
+        ? `<span style="color:var(--gold)">ℹ ${job.calibration_note}</span><br><br>` : "") +
+      `Fertig – ${tierCount} von 3 Stufen automatisch belegt. Entweder alle gemeinsam ` +
+      `übernehmen, oder in der Tabelle pro Zeile selbst wählen, welcher Wert für welche ` +
+      `Stufe gilt.`;
     const btn = document.createElement("button");
     btn.className = "btn-gold";
     btn.style.marginTop = "10px";
@@ -518,4 +543,28 @@ function openCalibrationResult(jobId) {
   document.getElementById("calStatus").textContent = "Lade Ergebnis…";
   document.getElementById("calModal").style.display = "flex";
   pollCalibration();
+}
+
+
+// Übernimmt EINE Tabellenzeile für eine selbst gewählte Stufe. Die übrigen
+// Stufen der Kategorie bleiben erhalten (merge), statt überschrieben zu werden.
+async function applySingleRow(category, categoryLabel, tier, row, sourceFile) {
+  const tiers = {};
+  tiers[tier] = {
+    quality: row.quality, vmaf: row.vmaf, vmaf_p5: row.vmaf_p5, cambi: row.cambi,
+    target_mbps: Math.round(row.bitrate_mbps * 1.5 * 10) / 10,
+  };
+  try {
+    const res = await fetch("/api/calibrate/apply", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, tiers, source: sourceFile || "", merge: true }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    document.getElementById("calStatus").textContent =
+      `Gespeichert: Stufe „${tier}“ für „${categoryLabel}“ = Qualität ${row.quality} ` +
+      `(Ø ${row.vmaf}), Deckel ${tiers[tier].target_mbps} Mbit/s. Die anderen Stufen bleiben unverändert.`;
+  } catch (err) {
+    alert("Speichern fehlgeschlagen: " + err.message);
+  }
 }
