@@ -88,3 +88,7 @@ tbody tr:hover { background: #1a1a1a; }
 .row-actions { display: flex; gap: 4px; }
 .row-actions button { padding: 4px 9px; }
 .row-actions button:disabled { opacity: 0.3; cursor: default; }
+.bulk-profile { display: flex; align-items: center; gap: 8px; }
+.bulk-profile label { color: var(--muted); font-size: 12.5px; }
+.bulk-profile select { min-width: 210px; }
+.rowprofile { width: 100%; font-size: 12.5px; }

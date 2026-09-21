@@ -81,17 +81,55 @@
     <h2 style="margin-top:0">Scan-Ergebnisse</h2>
     <div class="results-toolbar">
       <label><input type="checkbox" id="selectAll" onclick="toggleAll(this)"> Alle auswählen</label>
+      <div class="bulk-profile">
+        <label for="bulkProfile">Profil für alle angehakten:</label>
+        <select id="bulkProfile"></select>
+        <button class="btn-ghost" onclick="applyBulkProfile()">Anwenden</button>
+      </div>
       <span id="resultsCount" class="status-line"></span>
     </div>
     <table id="resultsTable">
       <thead>
-        <tr><th style="width:30px"></th><th>Datei</th><th>Empfehlung</th></tr>
+        <tr><th style="width:30px"></th><th>Datei</th><th style="width:230px">Profil</th><th>Empfehlung</th></tr>
       </thead>
       <tbody id="resultsBody"></tbody>
     </table>
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeResults()">Abbrechen</button>
+      <button class="btn-ghost" id="calibrateBtn" onclick="startCalibration()"
+              style="display:none">Qualität kalibrieren…</button>
       <button class="btn-gold" onclick="processSelected()">Ausgewählte verarbeiten</button>
+    </div>
+  </div>
+</div>
+
+<div id="calModal" class="modal" style="display:none">
+  <div class="modal-content">
+    <h2 style="margin-top:0">Qualitäts-Kalibrierung</h2>
+    <p class="hint" id="calStatus"></p>
+    <table id="calTable" style="display:none">
+      <thead><tr>
+        <th>Qualität</th><th title="Durchschnitt über alle Messstellen">VMAF Ø</th>
+        <th title="Die schlechtesten 5 % der Frames - zeigt kurze Einbrüche, die im Durchschnitt untergehen">Schwächste 5 %</th>
+        <th title="Banding (Streifen in Verläufen). 0 = keins, höher = mehr">Banding</th>
+        <th>Bitrate</th><th>Hochgerechnet</th><th></th>
+      </tr></thead>
+      <tbody id="calBody"></tbody>
+    </table>
+    <p class="hint">
+      Gemessen wird an drei Stellen (25/50/75 % der Laufzeit), damit weder eine ruhige
+      Dialogszene noch eine Actionsequenz allein das Ergebnis bestimmt. Eine Stufe gilt
+      nur als erreicht, wenn der <strong>Durchschnitt</strong> das Ziel schafft
+      <strong>und</strong> die schwächsten 5 % der Frames höchstens 6 Punkte darunter
+      liegen – 6 Punkte sind die Schwelle, ab der die meisten Zuschauer einen Unterschied
+      bemerken. Der Durchschnitt allein würde kurze, sichtbare Einbrüche verstecken.
+      <br><br>
+      <strong>Banding</strong> fließt nicht automatisch ein, weil es dafür keinen
+      belastbaren Grenzwert gibt – steigt der Wert zwischen zwei Stufen deutlich an, lohnt
+      bei HDR und 3D-Animation die bessere Stufe.
+    </p>
+    <div class="modal-actions">
+      <button class="btn-ghost" onclick="closeCal()">Schließen</button>
     </div>
   </div>
 </div>
@@ -105,6 +143,17 @@
 
 <script>
   window.SAVED_THRESHOLD = {{ settings.downsize_threshold_mbps }};
+  // Anzeigename, Stufe und SDR-Kennung je Profil - das Frontend baut daraus
+  // die Dropdowns und die Vorauswahl passend zum Material.
+  window.PROFILE_NAMES = {
+    {% for key, p in profiles.items() %}"{{ key }}": {{ p.name | tojson }}{{ "," if not loop.last }}{% endfor %}
+  };
+  window.PROFILE_TIERS = {
+    {% for key, p in profiles.items() %}"{{ key }}": {{ (p.tier or "") | tojson }}{{ "," if not loop.last }}{% endfor %}
+  };
+  window.PROFILE_SDR = {
+    {% for key, p in profiles.items() %}"{{ key }}": {{ (p.sdr or false) | tojson }}{{ "," if not loop.last }}{% endfor %}
+  };
   window.PROFILE_CATEGORIES = {
     {% for key, p in profiles.items() %}"{{ key }}": {{ p.categories | tojson }}{{ "," if not loop.last }}{% endfor %}
   };

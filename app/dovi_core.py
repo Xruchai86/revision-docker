@@ -29,6 +29,13 @@ DOVI_TOOL = shutil.which("dovi_tool") or "/usr/local/bin/dovi_tool"
 MKVMERGE = shutil.which("mkvmerge") or "/usr/bin/mkvmerge"
 MEDIAINFO = shutil.which("mediainfo") or "/usr/bin/mediainfo"
 
+# Separates ffmpeg NUR zum Messen (VMAF). Das System-ffmpeg aus den
+# Ubuntu-Quellen ist ohne --enable-libvmaf gebaut (im Container geprueft: nur
+# "vmafmotion" vorhanden, das ist die Bewegungskomponente, NICHT der VMAF-Wert).
+# Fehlt das Binary, bleibt die Kalibrierung einfach deaktiviert - Encoden
+# laeuft unveraendert ueber FFMPEG weiter.
+FFMPEG_VMAF = shutil.which("ffmpeg-vmaf")
+
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m2ts"}
 
 # Explizit selbst ausgelesen statt uns blind auf Pythons implizite TMPDIR-
@@ -95,79 +102,224 @@ def _temp_dir(prefix: str) -> tempfile.TemporaryDirectory:
 # kombinieren statt einfach nur die Bitrate zu senken.
 CATEGORIES = {
     "film": "Realfilm",
-    "serie": "Serie",
-    "anime_film": "Anime-Film",
-    "anime_serie": "Anime-Serie",
+    "serie": "Serie (Realfilm)",
+    "animation_film": "Animationsfilm (3D/CGI)",
+    "animation_serie": "Animationsserie (3D/CGI)",
+    "anime_film": "Anime-Film (2D)",
+    "anime_serie": "Anime-Serie (2D)",
 }
 
+# Stufen ("tier"): Die VMAF-Kalibrierung misst je Kategorie EINMAL und legt
+# danach fuer jede Stufe den passenden Qualitaetswert ab - "sparsam" zielt auf
+# VMAF 90, "empfohlen" auf 93, "max" auf 95. So muessen die drei Stufen nicht
+# geraten werden, sondern ergeben sich aus derselben Messung.
+#
+# SDR-Varianten: SDR kommt bei gleicher wahrgenommener Qualitaet mit weniger
+# Bits aus als HDR (kleinerer Dynamikumfang, weniger Farbtiefe). Die Zielwerte
+# liegen deshalb rund ein Viertel niedriger. WICHTIG ist aber vor allem, dass
+# SDR-Material NICHT mit BT.2020/PQ gekennzeichnet wird - das passiert nur im
+# DV-Reencode-Pfad, der fuer SDR gar nicht erst greift.
 QUALITY_PROFILES = {
-    # --- Realfilm ---
     "qsv_film": dict(
-        name="Film – QSV (empfohlen)", categories=["film"],
+        name="Realfilm – empfohlen", categories=["film"], tier="empfohlen",
         encoder="qsv", preset="slow", rc_mode="QVBR",
         target_mbps=30, quality=22, bframes=4, lookahead=32,
     ),
     "qsv_film_max": dict(
-        name="Film – QSV maximale Qualität (langsam)", categories=["film"],
+        name="Realfilm – maximale Qualität", categories=["film"], tier="max",
         encoder="qsv", preset="veryslow", rc_mode="QVBR",
         target_mbps=40, quality=19, bframes=4, lookahead=40,
     ),
-    "qsv_archiv": dict(
-        name="Archiv – QSV ohne Bitraten-Deckel", categories=["film", "anime_film"],
-        encoder="qsv", preset="veryslow", rc_mode="ICQ",
-        target_mbps=None, quality=20, bframes=4, lookahead=40,
-    ),
-    # --- Serie ---
-    "qsv_serie": dict(
-        name="Serie – QSV (empfohlen)", categories=["serie"],
+    "qsv_film_save": dict(
+        name="Realfilm – sparsam", categories=["film"], tier="sparsam",
         encoder="qsv", preset="medium", rc_mode="QVBR",
-        target_mbps=16, quality=23, bframes=4, lookahead=24,
+        target_mbps=21, quality=24, bframes=4, lookahead=24,
+    ),
+    "qsv_film_sdr": dict(
+        name="Realfilm · SDR – empfohlen", categories=["film"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="slow", rc_mode="QVBR",
+        target_mbps=22, quality=22, bframes=4, lookahead=32,
+    ),
+    "qsv_film_sdr_max": dict(
+        name="Realfilm · SDR – maximale Qualität", categories=["film"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=30, quality=19, bframes=4, lookahead=40,
+    ),
+    "qsv_film_sdr_save": dict(
+        name="Realfilm · SDR – sparsam", categories=["film"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=16, quality=24, bframes=4, lookahead=24,
+    ),
+    "qsv_serie": dict(
+        name="Serie – empfohlen", categories=["serie"], tier="empfohlen",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=16, quality=23, bframes=4, lookahead=32,
     ),
     "qsv_serie_max": dict(
-        name="Serie – QSV hohe Qualität", categories=["serie"],
-        encoder="qsv", preset="slow", rc_mode="QVBR",
-        target_mbps=24, quality=20, bframes=4, lookahead=32,
+        name="Serie – maximale Qualität", categories=["serie"], tier="max",
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=22, quality=20, bframes=4, lookahead=40,
     ),
-    # --- Anime: niedrigere Bitrate, aber besserer Qualitaetswert ---
+    "qsv_serie_save": dict(
+        name="Serie – sparsam", categories=["serie"], tier="sparsam",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=11, quality=25, bframes=4, lookahead=24,
+    ),
+    "qsv_serie_sdr": dict(
+        name="Serie · SDR – empfohlen", categories=["serie"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=12, quality=23, bframes=4, lookahead=32,
+    ),
+    "qsv_serie_sdr_max": dict(
+        name="Serie · SDR – maximale Qualität", categories=["serie"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=16, quality=20, bframes=4, lookahead=40,
+    ),
+    "qsv_serie_sdr_save": dict(
+        name="Serie · SDR – sparsam", categories=["serie"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=8, quality=25, bframes=4, lookahead=24,
+    ),
+    "qsv_animation_film": dict(
+        name="Animationsfilm – empfohlen", categories=["animation_film"], tier="empfohlen",
+        encoder="qsv", preset="slow", rc_mode="QVBR",
+        target_mbps=22, quality=20, bframes=4, lookahead=32,
+    ),
+    "qsv_animation_film_max": dict(
+        name="Animationsfilm – maximale Qualität", categories=["animation_film"], tier="max",
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=30, quality=17, bframes=4, lookahead=40,
+    ),
+    "qsv_animation_film_save": dict(
+        name="Animationsfilm – sparsam", categories=["animation_film"], tier="sparsam",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=15, quality=22, bframes=4, lookahead=24,
+    ),
+    "qsv_animation_film_sdr": dict(
+        name="Animationsfilm · SDR – empfohlen", categories=["animation_film"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="slow", rc_mode="QVBR",
+        target_mbps=16, quality=20, bframes=4, lookahead=32,
+    ),
+    "qsv_animation_film_sdr_max": dict(
+        name="Animationsfilm · SDR – maximale Qualität", categories=["animation_film"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=22, quality=17, bframes=4, lookahead=40,
+    ),
+    "qsv_animation_film_sdr_save": dict(
+        name="Animationsfilm · SDR – sparsam", categories=["animation_film"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=12, quality=22, bframes=4, lookahead=24,
+    ),
+    "qsv_animation_serie": dict(
+        name="Animationsserie – empfohlen", categories=["animation_serie"], tier="empfohlen",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=13, quality=21, bframes=4, lookahead=32,
+    ),
+    "qsv_animation_serie_max": dict(
+        name="Animationsserie – maximale Qualität", categories=["animation_serie"], tier="max",
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=18, quality=18, bframes=4, lookahead=40,
+    ),
+    "qsv_animation_serie_save": dict(
+        name="Animationsserie – sparsam", categories=["animation_serie"], tier="sparsam",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=9, quality=23, bframes=4, lookahead=24,
+    ),
+    "qsv_animation_serie_sdr": dict(
+        name="Animationsserie · SDR – empfohlen", categories=["animation_serie"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=10, quality=21, bframes=4, lookahead=32,
+    ),
+    "qsv_animation_serie_sdr_max": dict(
+        name="Animationsserie · SDR – maximale Qualität", categories=["animation_serie"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=13, quality=18, bframes=4, lookahead=40,
+    ),
+    "qsv_animation_serie_sdr_save": dict(
+        name="Animationsserie · SDR – sparsam", categories=["animation_serie"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=7, quality=23, bframes=4, lookahead=24,
+    ),
     "qsv_anime_film": dict(
-        name="Anime-Film – QSV (empfohlen)", categories=["anime_film"],
+        name="Anime-Film – empfohlen", categories=["anime_film"], tier="empfohlen",
         encoder="qsv", preset="slow", rc_mode="QVBR",
         target_mbps=18, quality=19, bframes=4, lookahead=32,
     ),
-    "qsv_anime_serie": dict(
-        name="Anime-Serie – QSV (empfohlen)", categories=["anime_serie"],
+    "qsv_anime_film_max": dict(
+        name="Anime-Film – maximale Qualität", categories=["anime_film"], tier="max",
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=24, quality=16, bframes=4, lookahead=40,
+    ),
+    "qsv_anime_film_save": dict(
+        name="Anime-Film – sparsam", categories=["anime_film"], tier="sparsam",
         encoder="qsv", preset="medium", rc_mode="QVBR",
-        target_mbps=10, quality=20, bframes=4, lookahead=24,
+        target_mbps=13, quality=21, bframes=4, lookahead=24,
     ),
-    "qsv_anime_max": dict(
-        name="Anime – QSV maximale Qualität", categories=["anime_film", "anime_serie"],
-        encoder="qsv", preset="veryslow", rc_mode="ICQ",
-        target_mbps=None, quality=17, bframes=4, lookahead=40,
+    "qsv_anime_film_sdr": dict(
+        name="Anime-Film · SDR – empfohlen", categories=["anime_film"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="slow", rc_mode="QVBR",
+        target_mbps=14, quality=19, bframes=4, lookahead=32,
     ),
-    # --- In jeder Kategorie verfuegbar ---
+    "qsv_anime_film_sdr_max": dict(
+        name="Anime-Film · SDR – maximale Qualität", categories=["anime_film"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=18, quality=16, bframes=4, lookahead=40,
+    ),
+    "qsv_anime_film_sdr_save": dict(
+        name="Anime-Film · SDR – sparsam", categories=["anime_film"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=9, quality=21, bframes=4, lookahead=24,
+    ),
+    "qsv_anime_serie": dict(
+        name="Anime-Serie – empfohlen", categories=["anime_serie"], tier="empfohlen",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=10, quality=20, bframes=4, lookahead=32,
+    ),
+    "qsv_anime_serie_max": dict(
+        name="Anime-Serie – maximale Qualität", categories=["anime_serie"], tier="max",
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=14, quality=17, bframes=4, lookahead=40,
+    ),
+    "qsv_anime_serie_save": dict(
+        name="Anime-Serie – sparsam", categories=["anime_serie"], tier="sparsam",
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=7, quality=22, bframes=4, lookahead=24,
+    ),
+    "qsv_anime_serie_sdr": dict(
+        name="Anime-Serie · SDR – empfohlen", categories=["anime_serie"], tier="empfohlen", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=8, quality=20, bframes=4, lookahead=32,
+    ),
+    "qsv_anime_serie_sdr_max": dict(
+        name="Anime-Serie · SDR – maximale Qualität", categories=["anime_serie"], tier="max", sdr=True,
+        encoder="qsv", preset="veryslow", rc_mode="QVBR",
+        target_mbps=10, quality=17, bframes=4, lookahead=40,
+    ),
+    "qsv_anime_serie_sdr_save": dict(
+        name="Anime-Serie · SDR – sparsam", categories=["anime_serie"], tier="sparsam", sdr=True,
+        encoder="qsv", preset="medium", rc_mode="QVBR",
+        target_mbps=5, quality=22, bframes=4, lookahead=24,
+    ),
+    # In jeder Kategorie verfuegbar: Entwurf und der VAAPI-Rueckfallweg.
     "qsv_fast": dict(
-        name="Schnell – QSV (Entwurf/Test)", categories=list(CATEGORIES),
+        name="Schnell – QSV (Entwurf/Test)", categories=list(CATEGORIES), tier="entwurf",
         encoder="qsv", preset="veryfast", rc_mode="VBR",
         target_mbps=12, quality=None, bframes=2, lookahead=None,
     ),
-    # --- VAAPI-Fallback: laeuft ohne Intels Repo, in jeder Kategorie waehlbar ---
     "qvbr_film": dict(
-        name="VAAPI-Fallback – QVBR", categories=list(CATEGORIES),
+        name="VAAPI-Fallback – QVBR", categories=list(CATEGORIES), tier="empfohlen",
         rc_mode="QVBR", target_mbps=30, quality=22, bframes=4, b_depth=3,
     ),
     "icq_archiv": dict(
-        name="VAAPI-Fallback – ICQ (ohne Deckel)", categories=list(CATEGORIES),
+        name="VAAPI-Fallback – ICQ (ohne Deckel)", categories=list(CATEGORIES), tier="max",
         rc_mode="ICQ", target_mbps=None, quality=20, bframes=4, b_depth=3,
     ),
-    "balanced": dict(
-        name="VAAPI-Fallback – VBR", categories=list(CATEGORIES),
-        rc_mode="VBR", target_mbps=20, quality=None, bframes=3, b_depth=1,
-    ),
-    "cbr_fix": dict(
-        name="VAAPI-Fallback – CBR (feste Größe)", categories=list(CATEGORIES),
-        rc_mode="CBR", target_mbps=20, quality=None, bframes=3, b_depth=1,
-    ),
 }
+
+# Ziel-VMAF je Stufe. Grundlage: 93-95 gilt als Transparenzbereich (darueber
+# zahlt man Bits fuer Unterschiede, die niemand mehr sieht), 90 ist die
+# bewusst sparsame Stufe.
+TIER_VMAF_TARGETS = {"sparsam": 90.0, "empfohlen": 93.0, "max": 95.0}
 
 DEFAULT_PROFILE = "qsv_film"
 
@@ -307,6 +459,7 @@ class MediaInfo:
     bitrate_mbps: float = 0.0
     dv_profile: Optional[str] = None
     is_hdr10: bool = False
+    is_sdr: bool = False
     action: str = "none"  # "dual_layer" | "reencode" | "relabel" | "none" | "unsupported"
 
 
@@ -358,6 +511,10 @@ def probe(path: str) -> MediaInfo:
     compat_str = video.get("HDR_Format_Compatibility", "") or ""
     is_hdr10 = "HDR10" in hdr_format or "HDR10" in compat_str
     mi.is_hdr10 = is_hdr10
+    # SDR = weder eine HDR-Kennung noch Dolby Vision. Wichtig fuer alles
+    # Weitere: SDR-Material darf NICHT mit BT.2020/PQ gekennzeichnet werden,
+    # das wuerde die Farben zerstoeren.
+    mi.is_sdr = not hdr_format.strip() and not compat_str.strip()
 
     dv_profile = None
     compat_id = None
@@ -565,7 +722,11 @@ def can_downsize(mi: MediaInfo, threshold_mbps: float) -> bool:
     Quellen mit hoher Bitrate - Profile 5/7/Relabel-Kandidaten zeigen den Button
     nicht (die brauchen zuerst den Fix, sonst wuerde eine kaputte DV-Struktur nur
     kleiner komprimiert statt repariert)."""
-    healthy = mi.is_hdr10 or mi.dv_profile == "8"
+    # SDR zaehlt ausdruecklich als "gesund": Es gibt dort keine DV-Struktur, die
+    # kaputt sein koennte - solche Dateien haben schlicht kein HDR und sind
+    # trotzdem legitime Downsize-Kandidaten. Frueher fielen sie komplett aus dem
+    # Scan, weil hier nur HDR10/Profile 8 als gesund galt.
+    healthy = mi.is_hdr10 or mi.dv_profile == "8" or mi.is_sdr
     needs_fix = mi.action in ("dual_layer", "reencode", "relabel")
     return healthy and not needs_fix and mi.bitrate_mbps > threshold_mbps
 
@@ -668,3 +829,240 @@ def maybe_chain_downsize(mi: MediaInfo, out_path: str, log, profile_key: str, th
             os.remove(downsized_path)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# VMAF-Kalibrierung
+#
+# Hintergrund: Die Qualitaetswerte in den Presets sind Erfahrungswerte, keine
+# Messwerte. Welcher Wert fuer DIESES Material auf DIESER Hardware der richtige
+# ist, laesst sich nicht herleiten - nur messen. Die Forschung ist sich beim
+# Ziel einig: VMAF 93-95 gilt als Transparenzbereich (darueber zahlt man Bits
+# fuer Qualitaet, die niemand mehr unterscheiden kann).
+#
+# Ablauf: kurzer Ausschnitt aus der Mitte der Datei, mit mehreren
+# Qualitaetswerten encodieren, jeweils gegen das Original messen. Das Ergebnis
+# ist eine Tabelle "Qualitaetswert -> VMAF + hochgerechnete Dateigroesse".
+# ---------------------------------------------------------------------------
+
+def vmaf_available() -> bool:
+    return FFMPEG_VMAF is not None
+
+
+def _vmaf_model_for(height: int) -> str:
+    """VMAF bringt eigene Modelle fuer unterschiedliche Sichtbedingungen mit.
+    Fuer 4K-Material ist das 4K-Modell das passende - das Standardmodell ist auf
+    1080p trainiert und wuerde bei 2160p systematisch danebenliegen."""
+    return "vmaf_4k_v0.6.1" if height >= 1600 else "vmaf_v0.6.1"
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    """Einfaches Perzentil ohne numpy-Abhaengigkeit (lineare Interpolation)."""
+    if not values:
+        return 0.0
+    v = sorted(values)
+    k = (len(v) - 1) * pct / 100.0
+    lo, hi = int(k), min(int(k) + 1, len(v) - 1)
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
+
+
+def measure_vmaf(reference: str, distorted: str, log, height: int = 2160,
+                 ref_start: float = 0.0, ref_duration: float | None = None,
+                 subsample: int = 3) -> dict:
+    """Misst einen encodierten Ausschnitt gegen das Original.
+
+    Liefert nicht nur den Mittelwert: Der Durchschnitt versteckt kurze, starke
+    Einbrueche - ein Encode, der fast durchgehend gut aussieht und eine Sekunde
+    lang zerfaellt, kann einen hohen Mittelwert haben und trotzdem einen
+    sichtbaren Fehler enthalten. Deshalb zusaetzlich harmonischer Mittelwert,
+    Minimum und das 5. Perzentil (die schlechtesten 5 % der Frames), berechnet
+    aus den Einzelwerten im JSON-Log.
+
+    Dazu CAMBI, Netflix' Banding-Metrik aus libvmaf (auf 10 Bit ausgelegt):
+    VMAF erfasst Banding - Streifen in weichen Verlaeufen - nur schlecht, und
+    genau das ist bei HDR und 3D-Animation das Hauptproblem. 0 = kein Banding,
+    hoeher = mehr. Faellt CAMBI aus (aeltere libvmaf), laeuft die Messung ohne
+    weiter.
+
+    subsample: nur jeden n-ten Frame bewerten. Gemessen lag der Mittelwert mit
+    jedem 5. Frame praktisch gleich (93,1308 statt 93,1300) bei einem Viertel
+    der Zeit. 3 ist ein vorsichtiger Wert, der fuer die Perzentile genug Frames
+    uebrig laesst."""
+    if not FFMPEG_VMAF:
+        raise RuntimeError("Kein VMAF-faehiges ffmpeg vorhanden.")
+
+    model = _vmaf_model_for(height)
+    ref_args = ["-ss", str(ref_start)]
+    if ref_duration:
+        ref_args += ["-t", str(ref_duration)]
+
+    def _run_vmaf(with_cambi: bool) -> dict | None:
+        with tempfile.TemporaryDirectory() as td:
+            log_path = os.path.join(td, "vmaf.json")
+            feats = ":feature=name=cambi" if with_cambi else ""
+            cmd = [FFMPEG_VMAF, "-v", "error",
+                   "-i", distorted,
+                   *ref_args, "-i", reference,
+                   "-lavfi",
+                   f"[0:v]setpts=PTS-STARTPTS[dist];"
+                   f"[1:v]setpts=PTS-STARTPTS[ref];"
+                   f"[dist][ref]libvmaf=model=version={model}{feats}:"
+                   f"n_subsample={subsample}:"
+                   f"log_fmt=json:log_path={log_path}:n_threads=4",
+                   "-f", "null", "-"]
+            log("$ " + " ".join(cmd))
+            proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+            if proc.returncode != 0:
+                if with_cambi:
+                    log("CAMBI nicht verfuegbar - messe ohne Banding-Metrik weiter.")
+                    return None
+                raise RuntimeError(f"VMAF-Messung fehlgeschlagen: {proc.stderr.strip()[:400]}")
+            with open(log_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+    data = _run_vmaf(with_cambi=True) or _run_vmaf(with_cambi=False)
+
+    frames = data.get("frames") or []
+    per_frame = [float(fr["metrics"]["vmaf"]) for fr in frames
+                 if "metrics" in fr and "vmaf" in fr["metrics"]]
+    cambi_vals = [float(fr["metrics"]["cambi"]) for fr in frames
+                  if "metrics" in fr and "cambi" in fr["metrics"]]
+    pooled = (data.get("pooled_metrics") or {}).get("vmaf") or {}
+
+    return {
+        "mean": float(pooled.get("mean", sum(per_frame) / max(len(per_frame), 1))),
+        "harmonic_mean": float(pooled.get("harmonic_mean", 0.0)),
+        "min": float(pooled.get("min", min(per_frame) if per_frame else 0.0)),
+        "p5": _percentile(per_frame, 5),
+        "cambi": (sum(cambi_vals) / len(cambi_vals)) if cambi_vals else None,
+        "cambi_max": max(cambi_vals) if cambi_vals else None,
+        "frames": per_frame,
+    }
+
+
+def calibrate_quality(src: str, profile_key: str, quality_values: list[int], log,
+                      sample_seconds: int = 120) -> list[dict]:
+    """Encodiert Ausschnitte mit mehreren Qualitaetswerten und misst jeden.
+
+    Statt EINES Ausschnitts aus der Mitte werden jetzt drei Stellen gemessen
+    (25 %, 50 %, 75 % der Laufzeit), zusammen so lang wie frueher der eine.
+    Ein einzelner Ausschnitt trifft zufaellig eine ruhige Dialogszene oder eine
+    Actionsequenz und verzerrt damit das Ergebnis in eine Richtung. Die
+    Frame-Werte aller drei Stellen werden gemeinsam ausgewertet.
+
+    Anfang und Ende bleiben weiter aussen vor - dort sind oft Schwarzbild,
+    Logos oder Abspann, die untypisch leicht zu komprimieren sind."""
+    if not FFMPEG_VMAF:
+        raise RuntimeError("Kein VMAF-faehiges ffmpeg vorhanden - Kalibrierung nicht moeglich.")
+
+    profile = QUALITY_PROFILES.get(profile_key) or QUALITY_PROFILES[DEFAULT_PROFILE]
+    mi = probe(src)
+    duration = mi.duration_sec or 0.0
+
+    # Drei Messstellen, zusammen sample_seconds lang
+    seg_len = max(10, sample_seconds // 3)
+    if duration > seg_len * 4:
+        starts = [max(0.0, duration * f - seg_len / 2) for f in (0.25, 0.50, 0.75)]
+    else:
+        starts = [0.0]              # sehr kurze Datei: eine Stelle genuegt
+        seg_len = int(min(sample_seconds, duration)) or sample_seconds
+
+    # Ohne Bitraten-Deckel messen (ICQ): Bei QVBR begrenzt der Deckel das
+    # Ergebnis, sobald der Qualitaetswert mehr Bits verlangt als erlaubt - dann
+    # misst man den Deckel statt den Qualitaetswert.
+    measure_profile = dict(profile)
+    measure_profile["rc_mode"] = "ICQ"
+    measure_profile["target_mbps"] = None
+
+    results = []
+    with _temp_dir("revision_cal_") as tmp:
+        for q in quality_values:
+            log(f"--- Qualitätswert {q} ({len(starts)} Messstellen à {seg_len}s) ---")
+            all_frames, cambis, cambi_peaks, total_bytes = [], [], [], 0
+
+            for idx, start in enumerate(starts):
+                out = os.path.join(tmp, f"sample_q{q}_{idx}.hevc")
+                cmd = build_encode_cmd(measure_profile, src, out, quality=q)
+                i = cmd.index("-i")
+                cmd = cmd[:i] + ["-ss", str(start), "-t", str(seg_len)] + cmd[i:]
+                _run(cmd, log)
+                total_bytes += os.path.getsize(out)
+
+                m = measure_vmaf(out, src, log, height=mi.height,
+                                 ref_start=start, ref_duration=seg_len)
+                all_frames.extend(m["frames"])
+                if m["cambi"] is not None:
+                    cambis.append(m["cambi"])
+                    cambi_peaks.append(m["cambi_max"])
+                _cleanup(out)
+
+            measured_s = seg_len * len(starts)
+            bitrate = (total_bytes * 8 / 1_000_000) / measured_s
+            full_gb = (bitrate * duration / 8) / 1024 if duration else 0.0
+            mean = sum(all_frames) / max(len(all_frames), 1)
+            row = {
+                "quality": q,
+                "vmaf": round(mean, 2),
+                "vmaf_p5": round(_percentile(all_frames, 5), 2),
+                "vmaf_min": round(min(all_frames), 2) if all_frames else 0.0,
+                "cambi": round(sum(cambis) / len(cambis), 2) if cambis else None,
+                "cambi_max": round(max(cambi_peaks), 2) if cambi_peaks else None,
+                "bitrate_mbps": round(bitrate, 1),
+                "estimated_gb": round(full_gb, 2),
+            }
+            results.append(row)
+            log(f"Qualität {q}: VMAF Ø {row['vmaf']}, schlechteste 5 % {row['vmaf_p5']}, "
+                f"Minimum {row['vmaf_min']}"
+                + (f", CAMBI Ø {row['cambi']} (Spitze {row['cambi_max']})" if cambis else "")
+                + f" · {bitrate:.1f} Mbit/s, hochgerechnet {full_gb:.2f} GB")
+    return results
+
+
+# Wie weit die schlechtesten 5 % der Frames hoechstens unter dem Ziel liegen
+# duerfen. 6 VMAF-Punkte sind Netflix' "gerade wahrnehmbarer Unterschied"
+# (JND) - ab da bemerkt mehr als die Haelfte der Zuschauer eine Aenderung.
+# Liegen die schwaechsten Szenen weniger als einen JND unter dem Ziel, faellt
+# der Einbruch den meisten nicht auf; darueber hinaus schon.
+P5_MAX_DROP = 6.0
+
+
+def tiers_from_calibration(results: list[dict]) -> dict:
+    """Ordnet den Messreihen die drei Stufen zu.
+
+    Pro Stufe wird der SPARSAMSTE Wert gesucht, der BEIDES erfuellt:
+      1. Durchschnitt >= Ziel (die normale Anforderung)
+      2. schlechteste 5 % der Frames >= Ziel - 1 JND
+
+    Punkt 2 ist neu und der eigentliche Gewinn: Der Durchschnitt allein
+    versteckt kurze, starke Einbrueche. Ein Wert, der im Mittel 93 schafft,
+    aber in schwierigen Szenen auf 80 faellt, waere frueher als "empfohlen"
+    durchgegangen - obwohl genau diese Szene sichtbar zerfaellt.
+
+    Wird ein Ziel von keinem gemessenen Wert erreicht, bleibt die Stufe leer
+    statt einen Wert zu erfinden. Der Bitraten-Deckel wird aus der gemessenen
+    Bitrate abgeleitet (Faktor 1,5) und ist damit Sicherheitsnetz, keine Bremse.
+
+    CAMBI (Banding) fliesst bewusst NICHT automatisch in die Auswahl ein: Fuer
+    einen festen Schwellwert gibt es keine belastbare Quelle, und ein
+    erfundener Grenzwert waere schlechter als keiner. Der Wert wird angezeigt,
+    damit man steigendes Banding zwischen den Stufen selbst sieht."""
+    tiers = {}
+    for tier, target in TIER_VMAF_TARGETS.items():
+        passing = [
+            r for r in results
+            if r["vmaf"] >= target
+            and r.get("vmaf_p5", r["vmaf"]) >= target - P5_MAX_DROP
+        ]
+        if not passing:
+            continue
+        best = max(passing, key=lambda r: r["quality"])   # sparsamster Treffer
+        tiers[tier] = {
+            "quality": best["quality"],
+            "vmaf": best["vmaf"],
+            "vmaf_p5": best.get("vmaf_p5"),
+            "cambi": best.get("cambi"),
+            "target_mbps": round(best["bitrate_mbps"] * 1.5, 1),
+            "measured_mbps": best["bitrate_mbps"],
+            "estimated_gb": best["estimated_gb"],
+        }
+    return tiers

@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import threading
 import queue
 import uuid
@@ -29,6 +30,21 @@ def _worker():
 
         try:
             mi = _scan_cache[job["path"]]
+
+            # Kalibrierung schreibt keine Ausgabedatei - sie misst nur und legt
+            # das Ergebnis am Job ab, damit es die Oberflaeche anzeigen kann.
+            if job["job_type"] == "calibrate":
+                rows = core.calibrate_quality(
+                    job["path"], job["profile"], job["quality_values"], log,
+                    sample_seconds=job.get("sample_seconds", 120))
+                job["calibration"] = rows
+                job["tiers"] = core.tiers_from_calibration(rows)
+                for t, e in job["tiers"].items():
+                    log(f"Stufe {t}: Qualität {e['quality']} (VMAF {e['vmaf']}), "
+                        f"Deckel {e['target_mbps']} Mbit/s")
+                job["status"] = "done"
+                continue
+
             suffix = "_downsized" if job["job_type"] == "downsize" else "_DV81"
             out_path = os.path.join(job["output_folder"], _out_filename(mi, suffix))
             bitrate = job.get("target_bitrate_mbps")
@@ -167,6 +183,7 @@ def api_scan():
                 "resolution": f"{mi.width}x{mi.height}" if mi.width else "-",
                 "bitrate_mbps": round(mi.bitrate_mbps, 1),
                 "dv_profile": mi.dv_profile,
+                "is_sdr": mi.is_sdr,
                 "action": mi.action,
                 "can_downsize": downsize_ok,
             })
@@ -180,13 +197,40 @@ def api_scan():
 
 
 def _quality_override() -> int | None:
-    """Qualitaetswert aus den Einstellungen - 0/leer bedeutet "Profil-Standard
-    verwenden", nicht "Qualitaet 0" (das waere nahezu verlustfrei und riesig)."""
+    """Globaler Qualitaetswert - 0/leer bedeutet "Profil-Standard verwenden",
+    nicht "Qualitaet 0" (das waere nahezu verlustfrei und riesig)."""
     try:
         q = int(_settings.get("quality_override", 0) or 0)
     except (TypeError, ValueError):
         return None
     return q if q > 0 else None
+
+
+def quality_for_path(path: str, category: str | None = None,
+                     tier: str | None = None) -> int | None:
+    """Qualitaetswert fuer eine konkrete Datei.
+
+    Vorrang: gemessener Kategorie-Wert (aus der VMAF-Kalibrierung) > globaler
+    Wert > None (= Preset-Standard). Damit wirkt eine Kalibrierung sofort und
+    nur fuer ihre Kategorie - Anime und Realfilm koennen unterschiedliche Werte
+    haben, ohne sich gegenseitig zu ueberschreiben."""
+    # Eine in der Oberflaeche GEWAEHLTE Kategorie schlaegt die Ordnerregel.
+    # Wichtig z.B. bei Animationsfilmen, die im selben Ordner wie Realfilme
+    # liegen - dort kann keine Pfadregel unterscheiden, der Nutzer aber schon.
+    cat = category or category_for_path(path)
+    if cat:
+        # Gemessene Werte liegen je Kategorie UND Stufe vor: dieselbe Messung
+        # liefert "sparsam"/"empfohlen"/"max" - welcher davon gilt, haengt am
+        # gewaehlten Profil.
+        per_cat = (_settings.get("quality_by_category") or {}).get(cat) or {}
+        entry = per_cat.get(tier or "empfohlen") or per_cat.get("empfohlen") or {}
+        try:
+            q = int(entry.get("quality", 0) or 0)
+            if q > 0:
+                return q
+        except (TypeError, ValueError):
+            pass
+    return _quality_override()
 
 
 def category_for_path(path: str) -> str | None:
@@ -202,12 +246,12 @@ def category_for_path(path: str) -> str | None:
     return None
 
 
-def output_folder_for(path: str, fallback: str) -> str:
+def output_folder_for(path: str, fallback: str, category: str | None = None) -> str:
     """Waehlt den Ausgabeordner anhand der Kategorie des QUELLpfades. Ohne
     passende Regel oder ohne konfigurierten Kategorie-Ordner bleibt es beim
     allgemeinen Zielordner - so bleibt alles wie bisher, solange nichts
     eingerichtet ist."""
-    cat = category_for_path(path)
+    cat = category or category_for_path(path)
     if cat:
         per_cat = (_settings.get("output_folders") or {}).get(cat, "")
         if per_cat and per_cat.strip():
@@ -217,7 +261,9 @@ def output_folder_for(path: str, fallback: str) -> str:
 
 def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: str,
                  target_bitrate_mbps: float | None = None,
-                 quality: int | None = None) -> list[str]:
+                 quality: int | None = None,
+                 category: str | None = None,
+                 profile_map: dict | None = None) -> list[str]:
     created = []
     for path in paths:
         if path not in _scan_cache:
@@ -225,7 +271,15 @@ def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: st
         # Zielordner pro Datei bestimmen - eine Auswahl kann Dateien aus
         # mehreren Kategorien enthalten, wenn ueber einen Sammelordner gescannt
         # wurde. Deshalb hier und nicht einmal vorab.
-        target_folder = output_folder_for(path, output_folder)
+        target_folder = output_folder_for(path, output_folder, category)
+        # Qualitaet ebenfalls pro Datei - eine Auswahl kann Dateien aus
+        # mehreren Kategorien enthalten, die unterschiedlich kalibriert sind.
+        # Profil pro Datei: SDR und HDR liegen bei vielen Sammlungen im selben
+        # Ordner, deshalb muss die Wahl je Datei moeglich sein und nicht nur
+        # pauschal fuer den ganzen Durchlauf.
+        file_profile = (profile_map or {}).get(path) or profile
+        file_quality = quality if quality is not None else quality_for_path(
+            path, category, core.QUALITY_PROFILES.get(file_profile, {}).get("tier"))
         os.makedirs(target_folder, exist_ok=True)
         job_id = str(uuid.uuid4())
         jobs[job_id] = {
@@ -233,10 +287,10 @@ def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: st
             "path": path,
             "filename": _scan_cache[path].filename,
             "output_folder": target_folder,
-            "profile": profile,
+            "profile": file_profile,
             "job_type": job_type,
             "target_bitrate_mbps": target_bitrate_mbps,
-            "quality": quality,
+            "quality": file_quality,
             "status": "queued",
             "log": [],
         }
@@ -259,7 +313,8 @@ def api_fix():
     settings_store.save(_settings)
 
     created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"],
-                          "fix", bitrate, _quality_override())
+                          "fix", bitrate, category=data.get("category") or None,
+                          profile_map=data.get("profile_map") or {})
     return jsonify({"job_ids": created})
 
 
@@ -277,8 +332,102 @@ def api_downsize():
     settings_store.save(_settings)
 
     created = _queue_jobs(data.get("paths", []), output_folder, _settings["quality_profile"],
-                          "downsize", bitrate, _quality_override())
+                          "downsize", bitrate, category=data.get("category") or None,
+                          profile_map=data.get("profile_map") or {})
     return jsonify({"job_ids": created})
+
+
+@app.route("/api/vmaf/status")
+def api_vmaf_status():
+    """Sagt der Oberflaeche, ob gemessen werden kann - statt einen Knopf
+    anzubieten, der dann an einem fehlenden Binary scheitert."""
+    return jsonify({"available": core.vmaf_available()})
+
+
+@app.route("/api/calibrate", methods=["POST"])
+def api_calibrate():
+    """Startet eine Qualitaets-Kalibrierung als Hintergrund-Job. Laeuft je nach
+    Ausschnittlaenge und Anzahl der Werte etliche Minuten, deshalb kein
+    blockierender Aufruf."""
+    if not core.vmaf_available():
+        return jsonify({"error": "Kein VMAF-fähiges ffmpeg im Image - Kalibrierung nicht möglich."}), 400
+
+    data = request.get_json() or {}
+    path = data.get("path", "")
+    if path not in _scan_cache:
+        return jsonify({"error": "Datei nicht im letzten Scan enthalten."}), 400
+
+    values = data.get("quality_values") or [17, 19, 21, 23]
+    try:
+        values = sorted({int(v) for v in values})
+    except (TypeError, ValueError):
+        return jsonify({"error": "Ungültige Qualitätswerte."}), 400
+
+    profile = data.get("profile") or _settings["quality_profile"]
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {
+        "id": job_id,
+        "path": path,
+        "filename": _scan_cache[path].filename,
+        "output_folder": "",
+        "profile": profile,
+        "job_type": "calibrate",
+        "quality_values": values,
+        "sample_seconds": int(data.get("sample_seconds") or 120),
+        "status": "queued",
+        "log": [],
+    }
+    job_queue.put(job_id)
+    return jsonify({"job_id": job_id, "quality_values": values})
+
+
+@app.route("/api/calibrate/apply", methods=["POST"])
+def api_calibrate_apply():
+    """Uebernimmt einen gemessenen Qualitaetswert fuer eine Kategorie. Ab dann
+    verwendet jeder Job dieser Kategorie automatisch diesen Wert."""
+    data = request.get_json() or {}
+    cat = (data.get("category") or "").strip()
+    if cat not in core.CATEGORIES:
+        return jsonify({"error": "Unbekannte Kategorie."}), 400
+    try:
+        quality = int(data.get("quality")) if data.get("quality") is not None else 0
+    except (TypeError, ValueError):
+        return jsonify({"error": "Ungültiger Qualitätswert."}), 400
+    if not quality and not data.get("tiers"):
+        return jsonify({"error": "Weder Qualitätswert noch Stufen übergeben."}), 400
+
+    tiers = data.get("tiers") or {}
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    source = data.get("source", "")
+
+    entry = {}
+    if tiers:
+        # Alle gemessenen Stufen auf einmal - sie stammen aus derselben Messung
+        # und gehoeren zusammen.
+        for tier, e in tiers.items():
+            if tier not in core.TIER_VMAF_TARGETS:
+                continue
+            entry[tier] = {
+                "quality": int(e.get("quality")),
+                "vmaf": e.get("vmaf"),
+                "vmaf_p5": e.get("vmaf_p5"),
+                "cambi": e.get("cambi"),
+                "target_mbps": e.get("target_mbps"),
+                "measured_at": stamp,
+                "source": source,
+            }
+    else:
+        # Einzelwert (aus einer Tabellenzeile) - gilt als "empfohlen".
+        entry["empfohlen"] = {
+            "quality": quality, "vmaf": data.get("vmaf"),
+            "measured_at": stamp, "source": source,
+        }
+
+    by_cat = dict(_settings.get("quality_by_category") or {})
+    by_cat[cat] = entry
+    _settings["quality_by_category"] = by_cat
+    settings_store.save(_settings)
+    return jsonify({"ok": True, "category": cat, "entry": entry})
 
 
 @app.route("/api/jobs")

@@ -75,6 +75,33 @@ RUN curl -fkL "https://github.com/quietvoid/dovi_tool/releases/download/2.3.3/do
     && rm /tmp/dovi_tool.tar.gz \
     && chmod +x /usr/local/bin/dovi_tool
 
+# Zweites ffmpeg AUSSCHLIESSLICH zum Messen (VMAF). Grund: das ffmpeg aus den
+# Ubuntu-Quellen ist ohne "--enable-libvmaf" gebaut - im Container ist nur der
+# Filter "vmafmotion" vorhanden, der lediglich die Bewegungskomponente
+# berechnet, NICHT den VMAF-Wert. Ein eigenstaendiges vmaf-Tool gibt es in den
+# Paketquellen ebenfalls nicht (beides im laufenden Container geprueft).
+#
+# Der Build von BtbN/FFmpeg-Builds enthaelt laut dessen eigener
+# Konfigurationszeile "--enable-libvmaf". Die "latest"-URL ist laut deren
+# README bewusst stabil ("provides consistent URLs always pointing to the
+# latest build"), also keine geratene Datums-URL.
+#
+# Es ersetzt das System-ffmpeg NICHT: Encoden laeuft weiter ueber /usr/bin/ffmpeg
+# mit der geprueften QSV/VAAPI-Kette. Dieses Binary wird nur fuer die
+# Qualitaetsmessung aufgerufen - ein kaputter Download kann den Encode-Pfad
+# also nicht beschaedigen, deshalb auch hier fehlertolerant.
+RUN set -eux; \
+    ( curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+        -o /tmp/ffmpeg-vmaf.tar.xz \
+      && mkdir -p /tmp/ffvmaf \
+      && tar -xJf /tmp/ffmpeg-vmaf.tar.xz -C /tmp/ffvmaf --strip-components=1 \
+      && cp /tmp/ffvmaf/bin/ffmpeg /usr/local/bin/ffmpeg-vmaf \
+      && chmod +x /usr/local/bin/ffmpeg-vmaf \
+      && rm -rf /tmp/ffmpeg-vmaf.tar.xz /tmp/ffvmaf \
+      && /usr/local/bin/ffmpeg-vmaf -hide_banner -filters 2>/dev/null | grep -q " libvmaf" \
+      && echo "VMAF: Mess-ffmpeg installiert, libvmaf-Filter vorhanden" ) \
+    || echo "WARNUNG: VMAF-ffmpeg nicht verfuegbar - Kalibrierung bleibt deaktiviert, Encoden unbeeintraechtigt"
+
 WORKDIR /app
 COPY app/requirements.txt .
 RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt

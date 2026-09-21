@@ -27,6 +27,19 @@ DEFAULTS = {
     # Ergebnisse deutlich unter dem Bitraten-Regler landen koennen.
     "quality_override": 0,
 
+    # Gemessene Qualitaetswerte JE KATEGORIE, gesetzt durch die
+    # VMAF-Kalibrierung. Aufbau pro Eintrag:
+    #   {"quality": 19, "vmaf": 94.2, "measured_at": "2026-09-20T18:04",
+    #    "source": "S07E01.mp4"}
+    # Warum nicht nur die Zahl: Nach ein paar Monaten weiss sonst niemand mehr,
+    # ob der Wert noch zum aktuellen Material passt oder an etwas voellig
+    # anderem gemessen wurde.
+    #
+    # Vorrang beim Encoden: Kategorie-Wert > globaler quality_override >
+    # Preset-Standard. So wirkt eine Kalibrierung sofort fuer ihre Kategorie,
+    # ohne andere Kategorien anzufassen.
+    "quality_by_category": {},
+
     # Ausgabeordner je Kategorie: {"film": "/media/output/Filme", ...}.
     # Leer oder fehlend = der allgemeine output_folder wird verwendet. Damit
     # landen Serien, Filme und Anime automatisch in getrennten Zielordnern,

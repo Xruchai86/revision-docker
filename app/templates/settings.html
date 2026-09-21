@@ -94,6 +94,55 @@
       <label>Downsize-Schwelle (Mbit/s)</label>
       <input type="number" id="downsizeThreshold" value="{{ settings.downsize_threshold_mbps }}">
     </div>
+
+    <h2 style="margin-top:22px">Gemessene Werte je Kategorie</h2>
+    <p class="hint">
+      Gesetzt durch die VMAF-Kalibrierung im Scan-Ergebnis. Eine Messung liefert alle drei
+      Stufen: <strong>sparsam</strong> zielt auf VMAF 90, <strong>empfohlen</strong> auf 93,
+      <strong>max</strong> auf 95. Welcher Wert greift, hängt am gewählten Profil – die
+      Werte haben Vorrang vor dem Regler oben. Einmal pro Inhaltsart messen genügt.
+    </p>
+    <table>
+      <thead><tr>
+        <th style="width:190px">Kategorie</th><th style="width:100px">Stufe</th>
+        <th style="width:90px">Qualität</th><th style="width:80px">VMAF Ø</th>
+        <th style="width:100px">Schwächste 5 %</th><th style="width:80px">Banding</th>
+        <th style="width:110px">Deckel</th><th>Gemessen an</th><th style="width:50px"></th>
+      </tr></thead>
+      <tbody>
+        {% for key, label in categories.items() %}
+        {% set entry = settings.quality_by_category.get(key) %}
+        {% if entry %}
+          {% for tier in ["sparsam", "empfohlen", "max"] %}
+          {% set e = entry.get(tier) %}
+          {% if e %}
+          <tr>
+            <td>{% if loop.first %}{{ label }}{% endif %}</td>
+            <td>{{ tier }}</td>
+            <td><strong>{{ e.quality }}</strong></td>
+            <td>{{ e.vmaf or "–" }}</td>
+            <td>{{ e.vmaf_p5 if e.vmaf_p5 is not none else "–" }}</td>
+            <td>{{ e.cambi if e.cambi is not none else "–" }}</td>
+            <td>{% if e.target_mbps %}{{ e.target_mbps }} Mbit/s{% else %}–{% endif %}</td>
+            <td class="status-line">
+              {{ e.source or "unbekannte Datei" }}{% if e.measured_at %} · {{ e.measured_at }}{% endif %}
+            </td>
+            <td>{% if loop.first %}
+              <button class="btn-ghost" onclick="clearCategoryQuality('{{ key }}')"
+                      title="Alle Stufen dieser Kategorie verwerfen">✕</button>
+            {% endif %}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        {% else %}
+          <tr>
+            <td>{{ label }}</td>
+            <td colspan="8" class="status-line">nicht gemessen – es gelten die Profil-Standardwerte</td>
+          </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
 
   <section class="card">
@@ -129,6 +178,7 @@
     {% for key, label in categories.items() %}"{{ key }}": "{{ label }}"{{ "," if not loop.last }}{% endfor %}
   };
   window.SAVED_RULES = {{ settings.category_rules | tojson }};
+  window.QUALITY_BY_CATEGORY = {{ settings.quality_by_category | tojson }};
 </script>
 <script src="{{ url_for('static', filename='settings.js') }}"></script>
 </body>

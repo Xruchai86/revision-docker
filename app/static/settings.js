@@ -263,3 +263,13 @@ function saveOutputFolders() {
   });
   saveSettingsField({ output_folders: map });
 }
+
+// Gemessenen Kategorie-Wert verwerfen. Danach greift wieder der globale Regler
+// bzw. der Preset-Standard - es bleibt also nie ohne Wert.
+async function clearCategoryQuality(category) {
+  const map = Object.assign({}, window.QUALITY_BY_CATEGORY || {});
+  delete map[category];
+  window.QUALITY_BY_CATEGORY = map;
+  await saveSettingsField({ quality_by_category: map });
+  location.reload();
+}

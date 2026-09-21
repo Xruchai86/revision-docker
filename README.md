@@ -110,6 +110,61 @@ mehr bit-identisch zum Original, kann aber genau dieses Abspielproblem umgehen.
 **Nur aktivieren, wenn du tatsächlich Kompatibilitätsprobleme hast** - der
 Standard-Fix bleibt der schnellere, verlustfreie Weg.
 
+## VMAF-Kalibrierung – Qualitätswerte messen statt schätzen (neu)
+
+**Ehrlich vorweg:** Die Qualitätswerte in den Presets waren Erfahrungswerte,
+keine Messwerte – ursprünglich von NVENC-CQ-Werten der Windows-App abgeleitet
+und per Analogie übertragen. Plausibel, aber nie an echtem Material geprüft.
+
+Die Forschung ist sich beim Ziel einig: **VMAF 93–95 gilt als
+Transparenzbereich** – Zuschauer nehmen zwischen 93 und 95 keinen Unterschied
+mehr wahr, und oberhalb von 95 wird Bandbreite für Qualität ausgegeben, die
+niemand unterscheiden kann. Die Bitrate allein sagt nichts darüber aus: Ein
+ruhiger Dialog kann bei 4 Mbit/s makellos aussehen, eine Actionszene bei
+derselben Bitrate zerfallen.
+
+**Ablauf:** Im Scan-Ergebnis genau eine Datei anhaken, „Qualität kalibrieren…“.
+Die App schneidet einen Ausschnitt aus der **Mitte** der Datei (Anfang und Ende
+sind oft Schwarzbild oder Abspann und damit untypisch leicht zu komprimieren),
+encodiert ihn mit mehreren Qualitätswerten und misst jeden gegen das Original.
+Ergebnis ist eine Tabelle: Qualitätswert → VMAF → Bitrate → hochgerechnete
+Dateigröße, mit Empfehlung auf dem **niedrigsten** Wert, der noch 93 erreicht.
+
+**Warum ein zweites ffmpeg im Image:** Das ffmpeg aus den Ubuntu-Quellen ist
+ohne `--enable-libvmaf` gebaut – im Container ist nur `vmafmotion` vorhanden,
+das lediglich die Bewegungskomponente berechnet, **nicht** den VMAF-Wert. Ein
+eigenständiges `vmaf`-Tool gibt es in den Paketquellen ebenfalls nicht (beides
+im laufenden Container geprüft, nicht angenommen). Deshalb kommt ein zweites
+Binary aus BtbN/FFmpeg-Builds dazu, dessen GPL-Variante laut eigener
+Konfigurationszeile `--enable-libvmaf` enthält. Es wird **ausschließlich zum
+Messen** aufgerufen; encodiert wird weiter mit dem System-ffmpeg über die
+geprüfte QSV/VAAPI-Kette. Schlägt der Download fehl, bleibt nur die
+Kalibrierung deaktiviert – der Knopf erscheint dann gar nicht erst.
+
+**Zwei Details, die das Ergebnis sonst wertlos machen würden:** Für 4K-Material
+wird automatisch das 4K-Modell verwendet (das Standardmodell ist auf 1080p
+trainiert und läge bei 2160p systematisch daneben), und die Referenz bekommt
+dieselbe Start-/Dauer-Angabe wie der Encode – sonst vergleicht VMAF
+unterschiedliche Frames.
+
+**Übernahme je Kategorie:** In der Ergebnistabelle steht pro Zeile
+„Für <Kategorie> übernehmen“. Ab dann verwendet **jede** Datei dieser Kategorie
+automatisch den gemessenen Wert – einmal pro Inhaltsart messen genügt.
+Vorrangreihenfolge beim Encoden: gemessener Kategorie-Wert → globaler Regler →
+Preset-Standard. Anime und Realfilm können damit unterschiedliche Werte haben,
+ohne sich gegenseitig zu überschreiben; eine gemischte Auswahl in einem
+Durchlauf bekommt pro Datei den jeweils passenden Wert.
+
+Gespeichert wird nicht nur die Zahl, sondern auch **VMAF-Punktzahl, Datum und
+Quelldatei** – sonst stehen dort nach ein paar Monaten vier Zahlen ohne
+Zusammenhang. Die Einstellungsseite zeigt das an und erlaubt das Verwerfen
+einzelner Werte (dann greift wieder der globale Regler).
+
+**Wie oft kalibrieren:** Pro Inhaltsart, nicht pro Datei – innerhalb einer Serie
+sind die Folgen technisch nahezu identisch. Neu messen lohnt sich bei
+Ausreißern: stark gekörnte alte Filme oder sehr dunkles Material brauchen mehr
+Bits als der Durchschnitt.
+
 ## RPU-Extraktion per Pipe statt Riesen-Zwischendatei (neu)
 
 Beim Reencode-Fix (Profile 5) und beim Downsize von Profile-8-Quellen wurde die
@@ -129,6 +184,116 @@ bekommt ffmpeg ein SIGPIPE und endet mit Rückgabewert -13. Das ist **kein**
 Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließlich
 der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
 gewertet, echter Fehlschlag → wird weiterhin erkannt.
+
+## Genauere Kalibrierung: Einbrüche, Banding, mehr Messstellen (neu)
+
+Drei Verbesserungen, jede aus der Recherche abgeleitet:
+
+**1. Die schwächsten Szenen zählen mit.** Der Durchschnitt versteckt kurze,
+starke Einbrüche – ein Encode, der fast durchgehend gut aussieht und eine
+Sekunde lang zerfällt, kann einen hohen Mittelwert haben und trotzdem einen
+sichtbaren Fehler enthalten. Aus den Einzelwerten im JSON-Log werden deshalb
+zusätzlich Minimum und das 5. Perzentil (die schlechtesten 5 % der Frames)
+berechnet. Eine Stufe gilt nur als erreicht, wenn der Durchschnitt das Ziel
+schafft **und** die schwächsten 5 % höchstens **6 Punkte** darunter liegen.
+Die 6 sind nicht gewählt, sondern Netflix' „gerade wahrnehmbarer Unterschied“:
+ab dort bemerkt mehr als die Hälfte der Zuschauer eine Änderung.
+
+Beispiel, im Test nachgestellt: Qualität 21 schaffte im Durchschnitt 93,4,
+fiel in schwierigen Szenen aber auf 84,2 – über einen JND unter dem Ziel.
+Früher wäre das „empfohlen“ geworden, jetzt wird stattdessen 19 gewählt.
+
+**2. Banding wird gemessen (CAMBI).** VMAF erfasst Streifen in weichen
+Verläufen nur schlecht – genau das Hauptproblem bei HDR und 3D-Animation.
+CAMBI ist Netflix' eigene Banding-Metrik aus libvmaf, auf 10 Bit ausgelegt
+(0 = kein Banding, höher = mehr). Sie wird angezeigt, fließt aber **bewusst
+nicht automatisch** in die Stufenwahl ein: Für einen festen Grenzwert gibt es
+keine belastbare Quelle, und ein erfundener Schwellwert wäre schlechter als
+keiner. Steigt der Wert zwischen zwei Stufen deutlich, lohnt die bessere.
+Fehlt CAMBI in der verwendeten libvmaf, läuft die Messung ohne weiter.
+
+**3. Drei Messstellen statt einer.** Ein einzelner Ausschnitt trifft zufällig
+eine ruhige Dialogszene oder eine Actionsequenz und verzerrt das Ergebnis.
+Gemessen wird jetzt bei 25, 50 und 75 % der Laufzeit, zusammen so lang wie
+vorher der eine Ausschnitt; die Frame-Werte werden gemeinsam ausgewertet.
+Bezahlt wird das durch **Subsampling**: Mit nur jedem fünften Frame lag der
+Mittelwert in einer Vergleichsmessung bei 93,1308 statt 93,1300 – bei einem
+Viertel der Zeit. Verwendet wird vorsichtig jeder dritte Frame, damit für die
+Perzentile genug Frames übrig bleiben.
+
+## SDR-Unterstützung, Profil je Datei und Stufen-Kalibrierung (neu)
+
+**SDR wurde bisher komplett übersprungen.** Die Prüfung, ob eine Datei
+verkleinert werden darf, verlangte HDR10 oder Dolby-Vision-Profil 8 – reine
+SDR-Dateien tauchten im Scan gar nicht erst auf. Das war für Anime und ältere
+Serien ein echtes Loch. SDR zählt jetzt ausdrücklich als „gesund“: Dort gibt es
+keine DV-Struktur, die kaputt sein könnte. Wichtig dabei: SDR-Material wird
+**nicht** mit BT.2020/PQ gekennzeichnet – das passiert nur im DV-Reencode-Pfad,
+der für SDR ohnehin nicht greift.
+
+**Profil je Datei plus Sammelauswahl.** Weil SDR und HDR bei vielen Sammlungen
+im selben Ordner liegen, hat jede Zeile im Scan-Ergebnis ein eigenes
+Profil-Dropdown, gefiltert nach Kategorie und passend zum Material vorbelegt
+(SDR-Datei → SDR-Profil). Oben im Fenster setzt „Profil für alle angehakten“
+eine Auswahl auf einmal; Zeilen, die das Profil nicht anbieten, bleiben
+unverändert und werden gezählt gemeldet.
+
+**Stufen-Kalibrierung – und ein dabei gefundener Konstruktionsfehler:**
+Bei QVBR ist der Bitraten-Deckel bindend – wird ein Frame durch Obergrenze oder
+Puffer beschränkt, liegt die erreichte Qualität unter der angeforderten. Bei
+einem Anime-Preset mit 10 Mbit/s Deckel und Qualitätswert 20 hätte also der
+**Deckel** begrenzt, nicht der Qualitätswert: Die Kalibrierung hätte gemessen,
+was der Deckel erlaubt, und ein besserer Qualitätswert hätte nichts geändert.
+Dazu passend: QVBR braucht zwingend eine `maxrate`-Angabe, sonst fällt es
+faktisch auf ICQ zurück – und ICQ allein ignoriert `maxrate`.
+
+Deshalb wird jetzt **in ICQ ohne Deckel gemessen**, damit der Qualitätswert
+allein wirkt. Aus derselben Messreihe ergeben sich alle drei Stufen – jeweils
+der sparsamste Wert, der das Ziel noch erreicht – und der dazu passende Deckel
+(1,5× der gemessenen Bitrate, also Sicherheitsnetz statt Bremse):
+
+| Stufe | Ziel-VMAF | Beispielmessung |
+|---|---|---|
+| sparsam | 90 | Qualität 23 → 10,2 Mbit/s, Deckel 15,3 |
+| empfohlen | 93 | Qualität 21 → 13,7 Mbit/s, Deckel 20,5 |
+| max | 95 | Qualität 19 → 18,3 Mbit/s, Deckel 27,5 |
+
+Erreicht kein gemessener Wert ein Ziel, bleibt die Stufe leer statt einen Wert
+zu erfinden – die Oberfläche sagt dann, dass mit niedrigeren Werten erneut
+gemessen werden sollte. Welche Stufe beim Encoden greift, hängt am gewählten
+Profil; fehlt für ein Profil die passende Stufe, gilt „empfohlen“.
+
+## Sechs Kategorien: 3D-Animation als eigener Fall (neu)
+
+Realfilm und 2D-Anime greifen zu kurz – **3D-/CGI-Animation ist ein dritter
+Fall** mit eigenen Anforderungen:
+
+- **Realfilm**: Filmkorn, Rauschen, echte Texturen → braucht viele Bits.
+- **2D-Anime**: große einfarbige Flächen, harte Kanten → sehr genügsam.
+- **3D-Animation**: kein Korn (darf also sparsamer sein als Realfilm), aber
+  viele weiche Verläufe, Tiefenunschärfe und subtile Schattierungen – genau dort
+  entsteht **Banding**, also sichtbare Streifen in Verläufen. Deshalb deutlich
+  besserer Qualitätswert als Realfilm, aber nicht so niedrige Bitrate wie 2D-Anime.
+
+| Kategorie | Bitrate | Qualität | Preset |
+|---|---|---|---|
+| Realfilm | 30 Mbit/s | 22 | slow |
+| Serie (Realfilm) | 16 Mbit/s | 23 | medium |
+| Animationsfilm (3D/CGI) | 22 Mbit/s | 20 | slow |
+| Animationsserie (3D/CGI) | 13 Mbit/s | 21 | medium |
+| Anime-Film (2D) | 18 Mbit/s | 19 | slow |
+| Anime-Serie (2D) | 10 Mbit/s | 20 | medium |
+
+**Wichtig – Grenze der automatischen Zuordnung:** Die Ordnerregeln können
+Realfilm und Animationsfilm nur unterscheiden, wenn sie in **getrennten Ordnern**
+liegen. Steht ein CGI-Film im selben Ordner wie Realfilme, kann keine Pfadregel
+das trennen – dann die Kategorie vor dem Verarbeiten manuell im Dropdown wählen.
+
+**Dabei behobener Fehler:** Die Kategorie-Auswahl steuerte bisher nur die
+Profilliste, während Qualitätswert und Zielordner serverseitig ausschließlich
+über die Ordnerregeln bestimmt wurden – eine manuelle Umstellung wirkte also nur
+halb. Jetzt wird die gewählte Kategorie mitgesendet und schlägt die Ordnerregel
+für beides.
 
 ## Kategorien, eigene Einstellungsseite und Live-Log (neu)
 
