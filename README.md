@@ -185,6 +185,43 @@ Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließli
 der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
 gewertet, echter Fehlschlag → wird weiterhin erkannt.
 
+## Kalibrierung: Frame-Synchronität und Plausibilitätsprüfung (Fix)
+
+Eine echte Messung an GoT S07E01 lieferte **unbrauchbare Werte**:
+
+| Qualität | VMAF Ø | Bitrate |
+|---|---|---|
+| 17 | 66,38 | 8,9 Mbit/s |
+| 19 | 66,23 | 5,7 Mbit/s |
+| 21 | 66,02 | 3,5 Mbit/s |
+| 23 | 65,72 | 2,2 Mbit/s |
+
+Die Bitrate fällt auf ein Viertel, der VMAF bewegt sich um 0,7 Punkte – physikalisch
+nicht plausibel. Das ist die typische Signatur **asynchron verglichener Frames**:
+VMAF misst dann den Unterschied zwischen benachbarten Bildern statt den Encode-Verlust.
+
+**Zwei Ursachen im Log:** Der Encode meldete `dup=1`/`dup=2` – ffmpeg hat Frames
+dupliziert, jedes Duplikat verschiebt die Folge um ein Bild. Und Encode
+(QSV-Hardware-Decoder) sowie Referenz (Software-Decoder im Mess-ffmpeg) wurden
+getrennt per Zeitsprung im Original positioniert, was nicht zwingend denselben
+Frame trifft.
+
+**Behebung:** Jeder Messausschnitt wird jetzt **einmal verlustfrei herausgeschnitten**
+(Stream-Copy), und Encode wie Messung lesen danach dieselbe Datei ab ihrem ersten
+Frame – kein getrenntes Positionieren mehr. `-fps_mode passthrough` verhindert
+duplizierte oder verworfene Frames. Nebeneffekt: Das große Original wird pro
+Messstelle nur noch einmal gelesen statt einmal je Qualitätswert.
+
+**Plausibilitätsprüfung:** Schwankt die Bitrate um mindestens Faktor 2, der VMAF
+aber um weniger als 2 Punkte – oder erreicht selbst der beste Wert keine 80 –, wird
+die Messung als unplausibel markiert und es werden **keine Stufen abgeleitet**.
+Sonst würden aus einem Messfehler dauerhaft gespeicherte Werte. Die Tabelle wird
+trotzdem angezeigt, damit man sieht, was schiefging.
+
+**Ergebnis jederzeit abrufbar:** Fertige Kalibrierungen haben in der Warteschlange
+einen Knopf „Ergebnis“. Vorher war das Ergebnis nur sichtbar, solange der Dialog ab
+dem Start durchgehend offen blieb.
+
 ## Genauere Kalibrierung: Einbrüche, Banding, mehr Messstellen (neu)
 
 Drei Verbesserungen, jede aus der Recherche abgeleitet:

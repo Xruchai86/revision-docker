@@ -984,33 +984,49 @@ def calibrate_quality(src: str, profile_key: str, quality_values: list[int], log
 
     results = []
     with _temp_dir("revision_cal_") as tmp:
-        for q in quality_values:
-            log(f"--- Qualitätswert {q} ({len(starts)} Messstellen à {seg_len}s) ---")
-            all_frames, cambis, cambi_peaks, total_bytes = [], [], [], 0
+        # Referenz-Ausschnitte EINMAL verlustfrei herausschneiden (Stream-Copy).
+        # Encode UND Messung lesen danach dieselbe Datei ab ihrem ersten Frame.
+        #
+        # Vorher wurden Encode (QSV-Hardware-Decoder) und Referenz (Software-
+        # Decoder im Mess-ffmpeg) jeweils separat per Zeitsprung im Original
+        # positioniert. Das landet nicht zwingend auf demselben Frame - schon
+        # ein bis zwei Bilder Versatz machen VMAF wertlos: Es misst dann den
+        # Unterschied zwischen benachbarten Bildern statt den Encode-Verlust.
+        # Beobachtetes Symptom: ~66 bei ALLEN Qualitaetswerten, obwohl die
+        # Bitrate um den Faktor 4 schwankte.
+        segments = []
+        for idx, start in enumerate(starts):
+            seg = os.path.join(tmp, f"ref_{idx}.mkv")
+            _run([FFMPEG, "-y", "-v", "error", "-ss", str(start), "-i", src,
+                  "-t", str(seg_len), "-map", "0:v:0", "-c", "copy", seg], log)
+            seg_mi = probe(seg)
+            segments.append((seg, seg_mi.duration_sec or float(seg_len)))
 
-            for idx, start in enumerate(starts):
+        for q in quality_values:
+            log(f"--- Qualitätswert {q} ({len(segments)} Messstellen à ~{seg_len}s) ---")
+            all_frames, cambis, cambi_peaks, total_bytes = [], [], [], 0
+            measured_s = 0.0
+
+            for idx, (seg, seg_dur) in enumerate(segments):
                 out = os.path.join(tmp, f"sample_q{q}_{idx}.hevc")
-                cmd = build_encode_cmd(measure_profile, src, out, quality=q)
-                i = cmd.index("-i")
-                cmd = cmd[:i] + ["-ss", str(start), "-t", str(seg_len)] + cmd[i:]
+                # -fps_mode passthrough: keine Frames duplizieren oder
+                # verwerfen. Das Log zeigte "dup=1"/"dup=2" - jedes duplizierte
+                # Bild verschiebt die Folge um einen Frame gegen die Referenz.
+                cmd = build_encode_cmd(measure_profile, seg, out, quality=q,
+                                       extra_out_args=["-fps_mode", "passthrough"])
                 _run(cmd, log)
                 total_bytes += os.path.getsize(out)
+                measured_s += seg_dur
 
-                # Schluesselwort-Argumente mit Absicht: Positional waren hier
-                # Referenz und Encode vertauscht - der Zeitsprung landete dann
-                # auf dem 40-Sekunden-Ausschnitt statt auf dem Original, und
-                # libvmaf bekam keine Frames.
-                m = measure_vmaf(reference=src, distorted=out, log=log,
-                                 height=mi.height, ref_start=start,
-                                 ref_duration=seg_len)
+                m = measure_vmaf(reference=seg, distorted=out, log=log,
+                                 height=mi.height)
                 all_frames.extend(m["frames"])
                 if m["cambi"] is not None:
                     cambis.append(m["cambi"])
                     cambi_peaks.append(m["cambi_max"])
                 _cleanup(out)
 
-            measured_s = seg_len * len(starts)
-            bitrate = (total_bytes * 8 / 1_000_000) / measured_s
+            bitrate = (total_bytes * 8 / 1_000_000) / max(measured_s, 1.0)
             full_gb = (bitrate * duration / 8) / 1024 if duration else 0.0
             mean = sum(all_frames) / max(len(all_frames), 1)
             row = {
@@ -1029,6 +1045,35 @@ def calibrate_quality(src: str, profile_key: str, quality_values: list[int], log
                 + (f", CAMBI Ø {row['cambi']} (Spitze {row['cambi_max']})" if cambis else "")
                 + f" · {bitrate:.1f} Mbit/s, hochgerechnet {full_gb:.2f} GB")
     return results
+
+
+def calibration_plausibility(results: list[dict]) -> str | None:
+    """Erkennt offensichtlich fehlerhafte Messungen, bevor daraus Werte werden.
+
+    Zwei Muster sind physikalisch nicht plausibel und deuten auf asynchron
+    verglichene Frames hin:
+      - Die Bitrate schwankt stark, der VMAF aber kaum. Weniger Bits koennen
+        nicht dieselbe Qualitaet liefern - wenn der Wert trotzdem flach bleibt,
+        misst VMAF etwas anderes als den Encode-Verlust.
+      - Selbst der beste Wert bleibt deutlich unter 80, obwohl bei sehr hohen
+        Bitraten gemessen wurde.
+    Liefert eine Warnung oder None."""
+    if len(results) < 2:
+        return None
+    vm = [r["vmaf"] for r in results]
+    br = [r["bitrate_mbps"] for r in results if r["bitrate_mbps"] > 0]
+    vm_spread = max(vm) - min(vm)
+    br_ratio = (max(br) / min(br)) if br and min(br) > 0 else 1.0
+    if br_ratio >= 2.0 and vm_spread < 2.0:
+        return (f"Messung unplausibel: Die Bitrate schwankte um Faktor {br_ratio:.1f}, "
+                f"der VMAF aber nur um {vm_spread:.1f} Punkte. Das deutet auf nicht "
+                "synchron verglichene Frames hin - aus diesen Werten werden keine "
+                "Stufen abgeleitet.")
+    if max(vm) < 80.0:
+        return (f"Messung unplausibel: Selbst der beste Wert erreicht nur VMAF {max(vm):.1f}. "
+                "Bei den gemessenen Bitraten waere deutlich mehr zu erwarten - "
+                "vermutlich ein Messfehler, keine echte Qualitaetsgrenze.")
+    return None
 
 
 # Wie weit die schlechtesten 5 % der Frames hoechstens unter dem Ziel liegen

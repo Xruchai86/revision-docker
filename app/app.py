@@ -38,7 +38,13 @@ def _worker():
                     job["path"], job["profile"], job["quality_values"], log,
                     sample_seconds=job.get("sample_seconds", 120))
                 job["calibration"] = rows
-                job["tiers"] = core.tiers_from_calibration(rows)
+                # Unplausible Messungen nicht in Stufen verwandeln - sonst
+                # wuerden aus einem Messfehler dauerhaft gespeicherte Werte.
+                warning = core.calibration_plausibility(rows)
+                job["calibration_warning"] = warning
+                job["tiers"] = {} if warning else core.tiers_from_calibration(rows)
+                if warning:
+                    log("WARNUNG: " + warning)
                 for t, e in job["tiers"].items():
                     log(f"Stufe {t}: Qualität {e['quality']} (VMAF {e['vmaf']}), "
                         f"Deckel {e['target_mbps']} Mbit/s")

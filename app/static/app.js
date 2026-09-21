@@ -262,7 +262,11 @@ async function pollJobs() {
       <td>${job.filename}</td>
       <td>${JOB_TYPE_LABELS[job.job_type] || job.job_type}</td>
       <td class="status-${job.status}">${job.status}${job.error ? " – " + job.error : ""}</td>
-      <td><button class="btn-ghost" onclick="showLog('${job.id}')">Log</button></td>
+      <td>
+        <button class="btn-ghost" onclick="showLog('${job.id}')">Log</button>
+        ${job.job_type === "calibrate" && job.status === "done"
+          ? `<button class="btn-gold" onclick="openCalibrationResult('${job.id}')">Ergebnis</button>` : ""}
+      </td>
     `;
     body.appendChild(tr);
   }
@@ -395,8 +399,12 @@ async function pollCalibration() {
 
   const tierCount = Object.keys(job.tiers || {}).length;
   const st = document.getElementById("calStatus");
-  if (!cat) {
-    st.textContent = "Fertig. Zum Übernehmen oben eine Kategorie wählen und erneut messen.";
+  if (job.calibration_warning) {
+    // Unplausible Messung: Werte zeigen (zur Diagnose), aber nichts anbieten.
+    st.innerHTML = `<strong style="color:var(--red,#e05555)">⚠ ${job.calibration_warning}</strong>`;
+  } else if (!cat) {
+    st.textContent = "Fertig. Zum Übernehmen oben eine Kategorie wählen und dieses Ergebnis " +
+      "über „Ergebnis“ in der Warteschlange erneut öffnen – neu messen ist nicht nötig.";
   } else if (tierCount === 0) {
     st.textContent = "Fertig – aber kein gemessener Wert erreicht die sparsame Stufe " +
       "(Ø 90 bei höchstens 6 Punkten Einbruch). Bitte mit niedrigeren Qualitätswerten erneut messen.";
@@ -498,4 +506,16 @@ function fillBulkProfile() {
   const fresh = buildProfileSelect(false);
   bulk.innerHTML = fresh.innerHTML;
   bulk.value = fresh.value;
+}
+
+
+// Öffnet das Ergebnis einer abgeschlossenen Kalibrierung aus der Warteschlange.
+// Vorher war das Ergebnis nur sichtbar, solange der Dialog ab dem Start offen
+// blieb - einmal geschlossen oder Seite neu geladen, war es nicht mehr erreichbar.
+function openCalibrationResult(jobId) {
+  calJobId = jobId;
+  document.getElementById("calTable").style.display = "none";
+  document.getElementById("calStatus").textContent = "Lade Ergebnis…";
+  document.getElementById("calModal").style.display = "flex";
+  pollCalibration();
 }
