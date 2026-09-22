@@ -185,6 +185,30 @@ Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließli
 der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
 gewertet, echter Fehlschlag → wird weiterhin erkannt.
 
+## Obergrenze: Originalbitrate statt erfundenem Deckel (Fix)
+
+**Zwei Fehler in einem:** Die Kalibrierung leitete einen „Deckel“ von 1,5 × der
+gemessenen Durchschnittsbitrate ab. Der Faktor 1,5 war nicht recherchiert, und er
+wurde auf den Durchschnitt von nur zwei Minuten Ausschnitt angewendet – eine
+Schlachtszene kann ein Vielfaches davon brauchen. Schlimmer noch: Dieser Deckel
+wurde **angezeigt und gespeichert, beim Encode aber nie verwendet**. Dort galt
+weiterhin der Regler der Hauptseite. Die Anzeige versprach also etwas, das nicht
+passierte.
+
+**Neu:** Für kalibrierte Kategorien ist die Obergrenze beim Encode die **Bitrate
+der jeweiligen Originaldatei**. Das folgt direkt aus dem Verhalten von QVBR: Die
+Qualität ist das Ziel, die Bitrate greift nur als Grenze, wenn ein Frame das
+Ziel sonst nicht erreichen könnte – ein hoher Deckel bläht also nichts auf. Der
+gemessene Qualitätswert entscheidet allein; die Grenze verhindert nur, dass eine
+Datei größer wird als ihr Original. Kein erfundener Faktor mehr.
+
+Beispiel GoT S07E01 (Original 39,2 Mbit/s), Serie auf Qualität 17 kalibriert:
+`-global_quality 17 -b:v 39200k -maxrate 58800k`. Nicht kalibrierte Kategorien
+verhalten sich unverändert (Regler bzw. Profilstandard).
+
+Die Spalte heißt jetzt „Gemessen“ – der Durchschnitt im Messausschnitt, ausdrücklich
+keine Grenze.
+
 ## Kalibrierung: Ausschnittanfang, Tiefstwerte und manuelle Übernahme (Fix)
 
 Die zweite echte Messung war beim **Durchschnitt** plausibel (93,86 → 90,98 fällt

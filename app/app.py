@@ -57,7 +57,8 @@ def _worker():
                     log("HINWEIS: " + job["calibration_note"])
                 for t, e in job["tiers"].items():
                     log(f"Stufe {t}: Qualität {e['quality']} (VMAF {e['vmaf']}), "
-                        f"Deckel {e['target_mbps']} Mbit/s")
+                        f"gemessen {e['measured_mbps']} Mbit/s - Obergrenze beim "
+                        "Encode ist die Bitrate der jeweiligen Originaldatei")
                 job["status"] = "done"
                 continue
 
@@ -222,6 +223,20 @@ def _quality_override() -> int | None:
     return q if q > 0 else None
 
 
+def is_calibrated(path: str, category: str | None = None,
+                  tier: str | None = None) -> bool:
+    """True, wenn fuer diese Datei ein gemessener Qualitaetswert vorliegt."""
+    cat = category or category_for_path(path)
+    if not cat:
+        return False
+    per_cat = (_settings.get("quality_by_category") or {}).get(cat) or {}
+    entry = per_cat.get(tier or "empfohlen") or per_cat.get("empfohlen") or {}
+    try:
+        return int(entry.get("quality", 0) or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def quality_for_path(path: str, category: str | None = None,
                      tier: str | None = None) -> int | None:
     """Qualitaetswert fuer eine konkrete Datei.
@@ -294,8 +309,26 @@ def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: st
         # Ordner, deshalb muss die Wahl je Datei moeglich sein und nicht nur
         # pauschal fuer den ganzen Durchlauf.
         file_profile = (profile_map or {}).get(path) or profile
+        file_tier = core.QUALITY_PROFILES.get(file_profile, {}).get("tier")
         file_quality = quality if quality is not None else quality_for_path(
-            path, category, core.QUALITY_PROFILES.get(file_profile, {}).get("tier"))
+            path, category, file_tier)
+
+        # Obergrenze fuer kalibrierte Dateien: die Bitrate des ORIGINALS.
+        # Bei QVBR ist die Qualitaet das Ziel, die Bitrate greift nur als
+        # Grenze, wenn ein Frame das Ziel sonst nicht erreichen koennte - ein
+        # hoher Deckel blaeht also nichts auf. Der gemessene Qualitaetswert
+        # entscheidet allein; die Grenze verhindert nur, dass eine Datei
+        # groesser wird als ihr Original.
+        #
+        # Frueher wurde aus der Kalibrierung ein Deckel von 1,5 x Durchschnitt
+        # eines kurzen Ausschnitts abgeleitet - ein nicht recherchierter Faktor,
+        # der in anspruchsvollen Szenen die Qualitaet gedrueckt haette. Und er
+        # wurde zwar angezeigt, beim Encode aber nie verwendet.
+        file_bitrate = target_bitrate_mbps
+        if quality is None and is_calibrated(path, category, file_tier):
+            src_mbps = getattr(_scan_cache[path], "bitrate_mbps", 0) or 0
+            if src_mbps > 0:
+                file_bitrate = round(src_mbps, 1)
         os.makedirs(target_folder, exist_ok=True)
         job_id = str(uuid.uuid4())
         jobs[job_id] = {
@@ -305,7 +338,7 @@ def _queue_jobs(paths: list[str], output_folder: str, profile: str, job_type: st
             "output_folder": target_folder,
             "profile": file_profile,
             "job_type": job_type,
-            "target_bitrate_mbps": target_bitrate_mbps,
+            "target_bitrate_mbps": file_bitrate,
             "quality": file_quality,
             "status": "queued",
             "log": [],
@@ -428,7 +461,7 @@ def api_calibrate_apply():
                 "vmaf": e.get("vmaf"),
                 "vmaf_p5": e.get("vmaf_p5"),
                 "cambi": e.get("cambi"),
-                "target_mbps": e.get("target_mbps"),
+                "measured_mbps": e.get("measured_mbps"),
                 "measured_at": stamp,
                 "source": source,
             }

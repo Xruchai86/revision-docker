@@ -1118,8 +1118,8 @@ def tiers_from_calibration(results: list[dict], use_p5: bool = True) -> dict:
     durchgegangen - obwohl genau diese Szene sichtbar zerfaellt.
 
     Wird ein Ziel von keinem gemessenen Wert erreicht, bleibt die Stufe leer
-    statt einen Wert zu erfinden. Der Bitraten-Deckel wird aus der gemessenen
-    Bitrate abgeleitet (Faktor 1,5) und ist damit Sicherheitsnetz, keine Bremse.
+    statt einen Wert zu erfinden. Einen Deckel leitet die Kalibrierung nicht
+    mehr ab - beim Encode gilt die Bitrate der Originaldatei als Obergrenze.
 
     CAMBI (Banding) fliesst bewusst NICHT automatisch in die Auswahl ein: Fuer
     einen festen Schwellwert gibt es keine belastbare Quelle, und ein
@@ -1135,12 +1135,16 @@ def tiers_from_calibration(results: list[dict], use_p5: bool = True) -> dict:
         if not passing:
             continue
         best = max(passing, key=lambda r: r["quality"])   # sparsamster Treffer
+        # Kein abgeleiteter Deckel mehr: Frueher stand hier 1,5 x gemessene
+        # Bitrate - ein nicht recherchierter Faktor auf den Durchschnitt eines
+        # kurzen Ausschnitts, der in anspruchsvollen Szenen die Qualitaet
+        # gedrueckt haette. Die Obergrenze ist jetzt beim Encode die Bitrate
+        # der jeweiligen Originaldatei (siehe _queue_jobs in app.py).
         tiers[tier] = {
             "quality": best["quality"],
             "vmaf": best["vmaf"],
             "vmaf_p5": best.get("vmaf_p5"),
             "cambi": best.get("cambi"),
-            "target_mbps": round(best["bitrate_mbps"] * 1.5, 1),
             "measured_mbps": best["bitrate_mbps"],
             "estimated_gb": best["estimated_gb"],
         }

@@ -101,37 +101,48 @@
       Stufen: <strong>sparsam</strong> zielt auf VMAF 90, <strong>empfohlen</strong> auf 93,
       <strong>max</strong> auf 95. Welcher Wert greift, hängt am gewählten Profil – die
       Werte haben Vorrang vor dem Regler oben. Einmal pro Inhaltsart messen genügt.
+      <br><br>
+      <strong>Obergrenze:</strong> Für kalibrierte Kategorien gilt beim Encode die Bitrate
+      der jeweiligen Originaldatei – der Qualitätswert entscheidet, die Grenze verhindert
+      nur, dass eine Datei größer als ihr Original wird. „Gemessen“ ist der Durchschnitt
+      im Messausschnitt, keine Grenze.
     </p>
     <table>
       <thead><tr>
         <th style="width:190px">Kategorie</th><th style="width:100px">Stufe</th>
         <th style="width:90px">Qualität</th><th style="width:80px">VMAF Ø</th>
         <th style="width:100px">Schwächste 5 %</th><th style="width:80px">Banding</th>
-        <th style="width:110px">Deckel</th><th>Gemessen an</th><th style="width:50px"></th>
+        <th style="width:110px" title="Durchschnitt im Messausschnitt - keine Obergrenze">Gemessen</th><th>Gemessen an</th><th style="width:50px"></th>
       </tr></thead>
       <tbody>
         {% for key, label in categories.items() %}
         {% set entry = settings.quality_by_category.get(key) %}
         {% if entry %}
+          {# Beschriftung an die erste TATSAECHLICH angezeigte Stufe haengen.
+             Vorher hing sie an loop.first (= "sparsam") - fehlte diese Stufe,
+             verschwand die Kategorie und der Wert sah aus, als gehoere er zur
+             Kategorie darueber. #}
+          {% set ns = namespace(first=true) %}
           {% for tier in ["sparsam", "empfohlen", "max"] %}
           {% set e = entry.get(tier) %}
           {% if e %}
           <tr>
-            <td>{% if loop.first %}{{ label }}{% endif %}</td>
+            <td>{% if ns.first %}{{ label }}{% endif %}</td>
             <td>{{ tier }}</td>
             <td><strong>{{ e.quality }}</strong></td>
             <td>{{ e.vmaf or "–" }}</td>
             <td>{{ e.vmaf_p5 if e.vmaf_p5 is not none else "–" }}</td>
             <td>{{ e.cambi if e.cambi is not none else "–" }}</td>
-            <td>{% if e.target_mbps %}{{ e.target_mbps }} Mbit/s{% else %}–{% endif %}</td>
+            <td>{% if e.measured_mbps %}{{ e.measured_mbps }} Mbit/s{% else %}–{% endif %}</td>
             <td class="status-line">
               {{ e.source or "unbekannte Datei" }}{% if e.measured_at %} · {{ e.measured_at }}{% endif %}
             </td>
-            <td>{% if loop.first %}
+            <td>{% if ns.first %}
               <button class="btn-ghost" onclick="clearCategoryQuality('{{ key }}')"
                       title="Alle Stufen dieser Kategorie verwerfen">✕</button>
             {% endif %}</td>
           </tr>
+          {% set ns.first = false %}
           {% endif %}
           {% endfor %}
         {% else %}

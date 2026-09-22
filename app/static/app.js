@@ -552,7 +552,7 @@ async function applySingleRow(category, categoryLabel, tier, row, sourceFile) {
   const tiers = {};
   tiers[tier] = {
     quality: row.quality, vmaf: row.vmaf, vmaf_p5: row.vmaf_p5, cambi: row.cambi,
-    target_mbps: Math.round(row.bitrate_mbps * 1.5 * 10) / 10,
+    measured_mbps: row.bitrate_mbps,
   };
   try {
     const res = await fetch("/api/calibrate/apply", {
@@ -563,7 +563,8 @@ async function applySingleRow(category, categoryLabel, tier, row, sourceFile) {
     if (data.error) { alert(data.error); return; }
     document.getElementById("calStatus").textContent =
       `Gespeichert: Stufe „${tier}“ für „${categoryLabel}“ = Qualität ${row.quality} ` +
-      `(Ø ${row.vmaf}), Deckel ${tiers[tier].target_mbps} Mbit/s. Die anderen Stufen bleiben unverändert.`;
+      `(Ø ${row.vmaf}, gemessen ${row.bitrate_mbps} Mbit/s). Obergrenze beim Encode ist die ` +
+      `Bitrate der jeweiligen Originaldatei. Die anderen Stufen bleiben unverändert.`;
   } catch (err) {
     alert("Speichern fehlgeschlagen: " + err.message);
   }
