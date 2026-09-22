@@ -92,3 +92,20 @@ tbody tr:hover { background: #1a1a1a; }
 .bulk-profile label { color: var(--muted); font-size: 12.5px; }
 .bulk-profile select { min-width: 210px; }
 .rowprofile { width: 100%; font-size: 12.5px; }
+
+/* Kalibrier-Dialog: acht Spalten passen nicht in die Standardbreite von 800px -
+   die Spalte "Selbst übernehmen" lief rechts heraus (sichtbar als waagerechter
+   Scrollbalken). Breiter, und Zahlen brechen nicht mehr um. */
+#calModal .modal-content { max-width: 1140px; width: 94%; }
+#calTable td { white-space: nowrap; }
+#calTable td .status-line { white-space: nowrap; }
+
+/* Ordnerwahl: Eingabefeld darf schrumpfen, der Knopf nicht - sonst ragt der
+   Knopf bei schmaler Spalte ins Nachbarfeld. */
+.path-picker input { min-width: 0; }
+.path-picker .btn-ghost { flex: 0 0 auto; white-space: nowrap; }
+
+/* Kopfzeile darf umbrechen: Der Scannen-Knopf ragte rechts über das Panel
+   hinaus, sobald Profilname und Bitraten-Regler zusammen zu breit wurden. */
+.setup-row { flex-wrap: wrap; row-gap: 14px; }
+.setup-row .field { min-width: 160px; }

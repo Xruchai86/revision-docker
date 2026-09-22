@@ -1,0 +1,347 @@
+/* ==========================================================================
+   ReVision · CYBERDECK-Theme
+   Passend zu den übrigen The-Second-Chance-Apps und dem Unraid-Theme
+   "sc.cyberdeck": Cyan/Magenta, Scanlines, Hex-Raster, Exo 2 + JetBrains Mono.
+
+   Greift nur bei <html data-theme="cyberdeck">. Die Basis-Styles (style.css)
+   arbeiten durchgehend mit Farbvariablen - dieses Theme überschreibt vor allem
+   diese Variablen und legt Effekte darüber, statt Regeln zu duplizieren.
+   ========================================================================== */
+
+html[data-theme="cyberdeck"] {
+  --bg: #04060d;
+  --panel: rgba(8, 14, 28, 0.86);
+  --panel-alt: rgba(0, 240, 255, 0.06);
+  --border: rgba(0, 240, 255, 0.22);
+  --text: #d8f7ff;
+  --muted: #6b8aa0;
+  --gold: #00f0ff;              /* Akzent: in style.css heißt er "gold" */
+  --cyan: #00f0ff;
+  --magenta: #ff2bd6;
+  --ok: #39ff88;
+  --err: #ff3b6b;
+  --red: #ff3b6b;
+
+  --font-ui: "Exo 2", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --glow-cyan: 0 0 6px rgba(0, 240, 255, 0.55), 0 0 18px rgba(0, 240, 255, 0.18);
+  --glow-magenta: 0 0 6px rgba(255, 43, 214, 0.6), 0 0 18px rgba(255, 43, 214, 0.2);
+  --cut: 12px;                  /* abgeschrägte Ecken */
+}
+
+/* --- Grundfläche: Hex-Raster + Vignette ----------------------------------- */
+html[data-theme="cyberdeck"] body {
+  font-family: var(--font-ui);
+  letter-spacing: 0.01em;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgba(0, 240, 255, 0.10), transparent 55%),
+    radial-gradient(ellipse at 100% 110%, rgba(255, 43, 214, 0.09), transparent 50%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='98' viewBox='0 0 56 98'%3E%3Cpath d='M28 0 L56 16 L56 49 L28 65 L0 49 L0 16 Z M28 65 L28 98' fill='none' stroke='%2300f0ff' stroke-opacity='0.07' stroke-width='1'/%3E%3C/svg%3E");
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* Scanlines über allem, rein dekorativ und nicht klickbar */
+html[data-theme="cyberdeck"] body::after {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.18) 3px, rgba(0, 0, 0, 0) 4px);
+  mix-blend-mode: multiply;
+}
+
+/* --- HUD-Header ------------------------------------------------------------ */
+html[data-theme="cyberdeck"] header {
+  position: relative;
+  background: linear-gradient(180deg, rgba(0, 240, 255, 0.07), rgba(4, 6, 13, 0.4));
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, var(--cyan), var(--magenta) 60%, transparent) 1;
+  backdrop-filter: blur(6px);
+}
+html[data-theme="cyberdeck"] header::before {      /* HUD-Eckmarken */
+  content: "";
+  position: absolute; left: 12px; top: 8px; width: 14px; height: 14px;
+  border-left: 2px solid var(--cyan); border-top: 2px solid var(--cyan);
+  opacity: 0.7;
+}
+html[data-theme="cyberdeck"] .mark {
+  width: 34px; height: 34px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cyan);
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  box-shadow: inset 0 0 0 2px var(--cyan);
+  background-color: rgba(0, 240, 255, 0.12);
+  text-shadow: var(--glow-cyan);
+}
+html[data-theme="cyberdeck"] h1 {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 18px;
+  color: var(--text);
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.45);
+}
+html[data-theme="cyberdeck"] .sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+/* Statuslämpchen hinter dem Untertitel */
+html[data-theme="cyberdeck"] .sub::before {
+  content: "";
+  display: inline-block;
+  width: 7px; height: 7px; margin-right: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  vertical-align: 1px;
+  animation: cd-pulse 2.4s ease-in-out infinite;
+}
+
+/* --- Panels mit abgeschrägten Ecken --------------------------------------- */
+html[data-theme="cyberdeck"] .setup-row,
+html[data-theme="cyberdeck"] .card,
+html[data-theme="cyberdeck"] .modal-content,
+html[data-theme="cyberdeck"] table {
+  border-radius: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)),
+                     calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  box-shadow: inset 0 1px 0 rgba(0, 240, 255, 0.12);
+}
+html[data-theme="cyberdeck"] .card h2,
+html[data-theme="cyberdeck"] main > h2,
+html[data-theme="cyberdeck"] .modal-content h2 {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 14px;
+  color: var(--cyan);
+  text-shadow: var(--glow-cyan);
+}
+html[data-theme="cyberdeck"] main > h2::before,
+html[data-theme="cyberdeck"] .card h2::before {
+  content: "// ";
+  color: var(--magenta);
+  text-shadow: var(--glow-magenta);
+}
+
+/* --- Formularelemente ------------------------------------------------------ */
+html[data-theme="cyberdeck"] .field label,
+html[data-theme="cyberdeck"] .bulk-profile label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+html[data-theme="cyberdeck"] input[type="text"],
+html[data-theme="cyberdeck"] input[type="number"],
+html[data-theme="cyberdeck"] select {
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  transition: border-color .15s, box-shadow .15s;
+}
+html[data-theme="cyberdeck"] input:focus,
+html[data-theme="cyberdeck"] select:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: var(--glow-cyan);
+}
+html[data-theme="cyberdeck"] select option { background: #0a1020; color: var(--text); }
+html[data-theme="cyberdeck"] input[type="range"] { accent-color: var(--cyan); }
+html[data-theme="cyberdeck"] input[type="checkbox"] { accent-color: var(--magenta); }
+
+html[data-theme="cyberdeck"] .bitrate-slider span,
+html[data-theme="cyberdeck"] .slider-value {
+  font-family: var(--font-mono);
+  color: var(--cyan);
+  text-shadow: var(--glow-cyan);
+}
+
+/* --- Buttons ---------------------------------------------------------------- */
+html[data-theme="cyberdeck"] .btn-gold {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12.5px;
+  color: #001014;
+  background: var(--cyan);
+  border: none;
+  border-radius: 0;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  box-shadow: var(--glow-cyan);
+  transition: background .15s, box-shadow .15s, transform .08s;
+}
+html[data-theme="cyberdeck"] .btn-gold:hover {
+  background: var(--magenta);
+  color: #16000f;
+  box-shadow: var(--glow-magenta);
+}
+html[data-theme="cyberdeck"] .btn-gold:active { transform: translateY(1px); }
+html[data-theme="cyberdeck"] .btn-gold:disabled {
+  background: rgba(0, 240, 255, 0.18);
+  color: var(--muted);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+html[data-theme="cyberdeck"] .btn-ghost,
+html[data-theme="cyberdeck"] a.btn-ghost {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: transparent;
+  color: var(--cyan);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  text-decoration: none;
+  transition: border-color .15s, color .15s, box-shadow .15s;
+}
+html[data-theme="cyberdeck"] .btn-ghost:hover {
+  border-color: var(--magenta);
+  color: var(--magenta);
+  box-shadow: var(--glow-magenta);
+}
+
+/* --- Tabellen --------------------------------------------------------------- */
+html[data-theme="cyberdeck"] thead th {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--cyan);
+  background: rgba(0, 240, 255, 0.05);
+  border-bottom: 1px solid var(--border);
+}
+html[data-theme="cyberdeck"] tbody td {
+  border-bottom: 1px solid rgba(0, 240, 255, 0.07);
+  font-size: 12.5px;
+}
+/* Zahlen in Tabellen in Monospace, damit Kommastellen untereinander stehen */
+html[data-theme="cyberdeck"] #calTable td,
+html[data-theme="cyberdeck"] .card table td { font-family: var(--font-mono); }
+html[data-theme="cyberdeck"] tbody tr:hover {
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.08), transparent 70%);
+}
+
+/* --- Status und Tags --------------------------------------------------------- */
+html[data-theme="cyberdeck"] .status-queued  { color: var(--muted); font-family: var(--font-mono); }
+html[data-theme="cyberdeck"] .status-running {
+  color: var(--cyan); font-family: var(--font-mono);
+  text-shadow: var(--glow-cyan);
+  animation: cd-pulse 1.6s ease-in-out infinite;
+}
+html[data-theme="cyberdeck"] .status-done    { color: var(--ok);  font-family: var(--font-mono); text-shadow: 0 0 6px rgba(57,255,136,.5); }
+html[data-theme="cyberdeck"] .status-failed  { color: var(--err); font-family: var(--font-mono); text-shadow: 0 0 6px rgba(255,59,107,.5); }
+
+html[data-theme="cyberdeck"] .tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid currentColor;
+}
+html[data-theme="cyberdeck"] .tag.dual_layer,
+html[data-theme="cyberdeck"] .tag.relabel  { color: var(--cyan);    box-shadow: var(--glow-cyan); }
+html[data-theme="cyberdeck"] .tag.reencode { color: var(--magenta); box-shadow: var(--glow-magenta); }
+html[data-theme="cyberdeck"] .tag.downsize { color: var(--ok); }
+
+/* --- Dialoge ------------------------------------------------------------------ */
+html[data-theme="cyberdeck"] .modal {
+  background: rgba(2, 4, 10, 0.78);
+  backdrop-filter: blur(4px);
+}
+html[data-theme="cyberdeck"] .modal-content {
+  box-shadow: inset 0 1px 0 rgba(0, 240, 255, 0.18), 0 0 40px rgba(0, 240, 255, 0.08);
+  border-color: rgba(0, 240, 255, 0.4);
+}
+html[data-theme="cyberdeck"] #logContent {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: #9ff7ff;
+  line-height: 1.5;
+}
+
+/* --- Ordner-Browser ----------------------------------------------------------- */
+html[data-theme="cyberdeck"] .breadcrumb {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.5);
+  border-left: 2px solid var(--magenta);
+}
+html[data-theme="cyberdeck"] .breadcrumb .crumb { color: var(--cyan); }
+html[data-theme="cyberdeck"] .browse-list { border-radius: 0; border-color: var(--border); }
+html[data-theme="cyberdeck"] .browse-item {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  border-bottom-color: rgba(0, 240, 255, 0.07);
+  transition: background .12s, padding-left .12s;
+}
+html[data-theme="cyberdeck"] .browse-item:hover {
+  background: rgba(0, 240, 255, 0.08);
+  padding-left: 20px;
+  color: var(--cyan);
+}
+
+/* --- Hinweise --------------------------------------------------------------- */
+html[data-theme="cyberdeck"] .hint {
+  border-left: 2px solid rgba(255, 43, 214, 0.5);
+  padding-left: 12px;
+}
+html[data-theme="cyberdeck"] .status-line { font-family: var(--font-mono); font-size: 12px; }
+
+/* --- Scrollbalken -------------------------------------------------------------- */
+html[data-theme="cyberdeck"] ::-webkit-scrollbar { width: 9px; height: 9px; }
+html[data-theme="cyberdeck"] ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.4); }
+html[data-theme="cyberdeck"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--cyan), var(--magenta));
+}
+html[data-theme="cyberdeck"] * { scrollbar-color: var(--cyan) rgba(0, 0, 0, 0.4); }
+
+/* --- Animationen ---------------------------------------------------------------- */
+@keyframes cd-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+/* Wer reduzierte Bewegung eingestellt hat, bekommt kein Pulsieren */
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="cyberdeck"] .sub::before,
+  html[data-theme="cyberdeck"] .status-running { animation: none; }
+}
+
+/* --- Kopfzeile darf umbrechen ------------------------------------------------
+   Die Monospace-Beschriftungen sind breiter als im Gold-Theme. Ohne Umbruch lief
+   die Zeile über, und die abgeschrägten Ecken (clip-path) schnitten den
+   Überstand ab - im Render-Test fehlten dadurch Bitraten-Wert und Scannen-Knopf. */
+html[data-theme="cyberdeck"] .setup-row {
+  flex-wrap: wrap;
+  row-gap: 14px;
+}
+html[data-theme="cyberdeck"] .setup-row .field { min-width: 170px; }
+html[data-theme="cyberdeck"] .setup-row .btn-gold { align-self: flex-end; }
+
+/* Tabellen in Dialogen NICHT abschrägen: clip-path schneidet Überstand hart ab,
+   statt ihn scrollbar zu lassen - im Render-Test verschwanden so die
+   Übernehmen-Knöpfe am rechten Rand. */
+html[data-theme="cyberdeck"] .modal-content table { clip-path: none; }
+
+/* Quellordner-Feld braucht wegen der breiteren Monospace-Schrift mehr Platz,
+   sonst ragt "Durchsuchen…" ins Kategorie-Feld. */
+html[data-theme="cyberdeck"] .setup-row .field:first-child { flex: 1.6 1 300px; }

@@ -52,6 +52,11 @@ DEFAULTS = {
     # wiederum die Profilliste filtert. Damit muss bei strikter Ordnerstruktur
     # nichts mehr pro Aufgabe manuell umgestellt werden.
     "category_rules": [],
+
+    # Oberflaechen-Theme: "cyberdeck" (Cyan/Magenta wie die uebrigen
+    # The-Second-Chance-Apps und das sc.cyberdeck-Unraid-Theme) oder "gold"
+    # (der urspruengliche Look, passend zur Windows-App).
+    "ui_theme": "cyberdeck",
 }
 
 

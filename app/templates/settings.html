@@ -1,9 +1,15 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="{{ settings.ui_theme or 'cyberdeck' }}">
 <head>
 <meta charset="UTF-8">
 <title>ReVision – Einstellungen</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<!-- Schriften wie in den anderen Homelab-Apps. Ohne Internet greifen die
+     Ersatzschriften aus dem Theme (Segoe UI / Consolas) - nichts bricht. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="{{ url_for('static', filename='theme-cyberdeck.css') }}">
 </head>
 <body>
 <header>
@@ -154,6 +160,21 @@
         {% endfor %}
       </tbody>
     </table>
+  </section>
+
+  <section class="card">
+    <h2>Darstellung</h2>
+    <div class="field" style="max-width:320px">
+      <label>Theme</label>
+      <select id="uiTheme">
+        <option value="cyberdeck" {% if (settings.ui_theme or 'cyberdeck') == 'cyberdeck' %}selected{% endif %}>
+          Cyberdeck – wie die übrigen Homelab-Apps
+        </option>
+        <option value="gold" {% if settings.ui_theme == 'gold' %}selected{% endif %}>
+          Gold – passend zur Windows-App
+        </option>
+      </select>
+    </div>
   </section>
 
   <section class="card">

@@ -185,6 +185,33 @@ Fehler, sondern der Normalfall bei Pipes – geprüft wird deshalb ausschließli
 der Rückgabewert von `dovi_tool`. Real durchgespielt: früher Leser → als Erfolg
 gewertet, echter Fehlschlag → wird weiterhin erkannt.
 
+## Cyberdeck-Theme (neu)
+
+Neuer Standard-Look passend zu den übrigen The-Second-Chance-Apps und dem
+Unraid-Theme `sc.cyberdeck`: Cyan/Magenta, Hex-Raster im Hintergrund, Scanlines,
+abgeschrägte Panel-Ecken, HUD-Header mit Statuslämpchen, Exo 2 für die Oberfläche
+und JetBrains Mono für Daten, Pfade und Logs. Umschaltbar unter
+*Einstellungen → Darstellung*; der bisherige Gold-Look (passend zur Windows-App)
+bleibt als zweites Theme erhalten.
+
+Umgesetzt als eigene Datei `theme-cyberdeck.css`, die fast nur die Farbvariablen
+des Basis-Stils überschreibt – keine doppelten Regeln. Ohne Internetzugang greifen
+Ersatzschriften (Segoe UI / Consolas), es bricht nichts. Wer „reduzierte Bewegung“
+im System eingestellt hat, bekommt kein Pulsieren.
+
+**Im Render-Test gefundene und behobene Fehler** (per Headless-Browser geprüft,
+nicht nur angenommen):
+- Monospace-Beschriftungen sind breiter: Die Kopfzeile lief über, und die
+  abgeschrägten Ecken schnitten Bitraten-Wert und Scannen-Knopf ab → Zeile darf
+  jetzt umbrechen.
+- „Durchsuchen…“ ragte ins Kategorie-Feld → Knopf schrumpft nicht mehr, das
+  Eingabefeld schon.
+- Kalibrier-Dialog zu schmal für acht Spalten – die Übernehmen-Knöpfe liefen rechts
+  heraus. Das betraf **auch das Gold-Theme** (dort als waagerechter Scrollbalken)
+  → Dialog breiter, Zahlen brechen nicht mehr um.
+- Im Gold-Theme ragte der Scannen-Knopf rechts über das Panel hinaus – ebenfalls
+  ein alter Fehler, jetzt behoben.
+
 ## Obergrenze: Originalbitrate statt erfundenem Deckel (Fix)
 
 **Zwei Fehler in einem:** Die Kalibrierung leitete einen „Deckel“ von 1,5 × der

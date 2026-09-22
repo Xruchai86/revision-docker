@@ -273,3 +273,13 @@ async function clearCategoryQuality(category) {
   await saveSettingsField({ quality_by_category: map });
   location.reload();
 }
+
+// Theme sofort umschalten (ohne Neuladen) und dauerhaft speichern.
+document.addEventListener("DOMContentLoaded", () => {
+  const sel = document.getElementById("uiTheme");
+  if (!sel) return;
+  sel.addEventListener("change", e => {
+    document.documentElement.setAttribute("data-theme", e.target.value);
+    saveSettingsField({ ui_theme: e.target.value });
+  });
+});
